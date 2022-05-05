@@ -3,7 +3,7 @@ use std::sync::{Arc, RwLock};
 use serde::{ser::SerializeStruct, Deserialize, Serialize};
 
 use crate::{
-    client::{FeathrClientImpl, FeathrClientModifier},
+    project::{FeathrProjectImpl, FeathrProjectModifier},
     Error,
 };
 
@@ -98,9 +98,7 @@ impl SourceImpl {
                     format!("{}_USER", self.name),
                     format!("{}_PASSWORD", self.name),
                 ],
-                JdbcAuth::Token { .. } => vec![
-                    format!("{}_TOKEN", self.name),
-                ],
+                JdbcAuth::Token { .. } => vec![format!("{}_TOKEN", self.name)],
                 _ => vec![],
             },
             _ => vec![],
@@ -108,7 +106,7 @@ impl SourceImpl {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Source {
     pub(crate) inner: Arc<SourceImpl>,
 }
@@ -121,17 +119,24 @@ impl Source {
     pub fn get_secret_keys(&self) -> Vec<String> {
         self.inner.get_secret_keys()
     }
+
+    #[allow(non_snake_case)]
+    pub fn INPUT_CONTEXT() -> Self {
+        Self {
+            inner: Arc::new(SourceImpl::INPUT_CONTEXT())
+        }
+    }
 }
 
 pub struct HdfsSourceBuilder {
-    owner: Arc<RwLock<FeathrClientImpl>>,
+    owner: Arc<RwLock<FeathrProjectImpl>>,
     name: String,
     path: Option<String>,
     time_window_parameters: Option<TimeWindowParameters>,
 }
 
 impl HdfsSourceBuilder {
-    pub(crate) fn new(owner: Arc<RwLock<FeathrClientImpl>>, name: &str) -> Self {
+    pub(crate) fn new(owner: Arc<RwLock<FeathrProjectImpl>>, name: &str) -> Self {
         Self {
             owner,
             name: name.to_string(),
@@ -161,7 +166,10 @@ impl HdfsSourceBuilder {
         let imp = SourceImpl {
             name: self.name.to_string(),
             location: SourceLocation::Hdfs {
-                path: self.path.clone().ok_or(Error::MissingHdfsUrl(self.name.to_string()))?,
+                path: self
+                    .path
+                    .clone()
+                    .ok_or(Error::MissingHdfsUrl(self.name.to_string()))?,
             },
             time_window_parameters: self.time_window_parameters.clone(),
         };
@@ -169,7 +177,7 @@ impl HdfsSourceBuilder {
     }
 }
 pub struct JdbcSourceBuilder {
-    owner: Arc<RwLock<FeathrClientImpl>>,
+    owner: Arc<RwLock<FeathrProjectImpl>>,
     name: String,
     url: Option<String>,
     dbtable: Option<String>,
@@ -186,7 +194,7 @@ pub enum JdbcSourceAuth {
 }
 
 impl JdbcSourceBuilder {
-    pub(crate) fn new(owner: Arc<RwLock<FeathrClientImpl>>, name: &str) -> Self {
+    pub(crate) fn new(owner: Arc<RwLock<FeathrProjectImpl>>, name: &str) -> Self {
         Self {
             owner,
             name: name.to_string(),
@@ -247,7 +255,10 @@ impl JdbcSourceBuilder {
         let imp = SourceImpl {
             name: self.name.to_string(),
             location: SourceLocation::Jdbc {
-                url: self.url.clone().ok_or(Error::MissingJdbcUrl(self.name.to_string()))?,
+                url: self
+                    .url
+                    .clone()
+                    .ok_or(Error::MissingJdbcUrl(self.name.to_string()))?,
                 dbtable: self.dbtable.to_owned(),
                 query: self.query.to_owned(),
                 auth: self.auth.clone().unwrap_or(JdbcAuth::Anonymous),

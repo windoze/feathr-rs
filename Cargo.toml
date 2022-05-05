@@ -2,5 +2,6 @@
 
 members = [
     "feathr-client",
+    "livy-client",
 ]
 

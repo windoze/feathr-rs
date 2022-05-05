@@ -7,22 +7,22 @@ use serde::Serialize;
 
 use crate::feature::{AnchorFeature, AnchorFeatureImpl, DerivedFeature, DerivedFeatureImpl};
 use crate::feature_builder::{AnchorFeatureBuilder, DerivedFeatureBuilder};
-use crate::{Error, Feature, HdfsSourceBuilder, JdbcSourceBuilder, Source, SourceImpl};
+use crate::{Error, Feature, HdfsSourceBuilder, JdbcSourceBuilder, Source, SourceImpl, TypedKey};
 
 #[derive(Debug)]
-pub struct FeathrClient {
+pub struct FeathrProject {
     input_context: Source,
-    inner: Arc<RwLock<FeathrClientImpl>>,
+    inner: Arc<RwLock<FeathrProjectImpl>>,
 }
 
-impl FeathrClient {
+impl FeathrProject {
     pub fn new() -> Self {
-        let inner = Arc::new(RwLock::new(FeathrClientImpl {
+        let inner = Arc::new(RwLock::new(FeathrProjectImpl {
             anchor_groups: Default::default(),
             derivations: Default::default(),
             sources: Default::default(),
         }));
-        Self {
+        FeathrProject {
             input_context: Source {
                 inner: Arc::new(SourceImpl::INPUT_CONTEXT()),
             },
@@ -83,14 +83,14 @@ impl FeathrClient {
 }
 
 #[derive(Debug, Serialize)]
-pub(crate) struct FeathrClientImpl {
+pub(crate) struct FeathrProjectImpl {
     #[serde(rename = "anchors")]
     anchor_groups: HashMap<String, AnchorGroup>,
     derivations: HashMap<String, Arc<DerivedFeatureImpl>>,
     sources: HashMap<String, Arc<SourceImpl>>,
 }
 
-impl FeathrClientImpl {
+impl FeathrProjectImpl {
     fn get_anchor(&self, group: &str, name: &str) -> Result<Arc<AnchorFeatureImpl>, Error> {
         let g = self
             .anchor_groups
@@ -115,7 +115,7 @@ impl FeathrClientImpl {
             .anchor_groups
             .get_mut(group)
             .ok_or_else(|| Error::AnchorGroupNotFound(group.to_string()))?
-            .insert(f))
+            .insert(f)?)
     }
 
     fn insert_derived(&mut self, f: DerivedFeatureImpl) -> Arc<DerivedFeatureImpl> {
@@ -141,20 +141,30 @@ impl FeathrClientImpl {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct AnchorGroup {
     name: String,
     anchors: IndexMap<String, Arc<AnchorFeatureImpl>>,
-    source: String,
+    source: Source,
     registry_tags: HashMap<String, String>,
 }
 
 impl AnchorGroup {
-    fn insert(&mut self, f: AnchorFeatureImpl) -> Arc<AnchorFeatureImpl> {
+    fn insert(&mut self, f: AnchorFeatureImpl) -> Result<Arc<AnchorFeatureImpl>, Error> {
+        if self.source == Source::INPUT_CONTEXT()
+            && (f.get_key().is_empty() || f.get_key() == vec![TypedKey::DUMMY_KEY()])
+        {
+            return Err(Error::DummyKeyUsedWithInputContext(f.get_name()));
+        }
+
+        if !self.anchors.is_empty() && (f.get_key_alias() != self.get_key_alias()) {
+            return Err(Error::InvalidKeyAlias(f.get_name(), self.name.clone()));
+        }
+
         let name = f.base.name.clone();
         let ret = Arc::new(f);
         self.anchors.insert(name, ret.clone());
-        ret
+        Ok(ret)
     }
 
     fn get(&self, name: &str) -> Result<Arc<AnchorFeatureImpl>, Error> {
@@ -164,6 +174,13 @@ impl AnchorGroup {
             .ok_or_else(|| Error::FeatureNotFound(name.to_string()))?
             .to_owned())
     }
+
+    fn get_key_alias(&self) -> Vec<String> {
+        self.anchors
+            .get_index(0)
+            .map(|(_, v)| v.get_key_alias())
+            .unwrap_or_default()
+    }
 }
 
 impl Serialize for AnchorGroup {
@@ -172,18 +189,14 @@ impl Serialize for AnchorGroup {
         S: serde::Serializer,
     {
         let mut state = serializer.serialize_struct("JdbcAuth", 3)?;
-        state.serialize_field("source", &self.source)?;
+        state.serialize_field("source", &self.source.get_name())?;
         #[derive(Serialize)]
         struct Key {
             #[serde(rename = "sqlExpr")]
             sql_expr: Vec<String>,
         }
         let key = Key {
-            sql_expr: self
-                .anchors
-                .get_index(0)
-                .map(|(_, v)| v.get_key_alias())
-                .unwrap_or_default(),
+            sql_expr: self.get_key_alias(),
         };
         state.serialize_field("key", &key)?;
         state.serialize_field("features", &self.anchors.clone())?;
@@ -192,14 +205,14 @@ impl Serialize for AnchorGroup {
 }
 
 pub struct AnchorGroupBuilder {
-    owner: Arc<RwLock<FeathrClientImpl>>,
+    owner: Arc<RwLock<FeathrProjectImpl>>,
     name: String,
-    source: Option<String>,
+    source: Option<Source>,
     registry_tags: HashMap<String, String>,
 }
 
 impl AnchorGroupBuilder {
-    fn new(owner: Arc<RwLock<FeathrClientImpl>>, name: &str) -> Self {
+    fn new(owner: Arc<RwLock<FeathrProjectImpl>>, name: &str) -> Self {
         Self {
             owner,
             name: name.to_string(),
@@ -209,7 +222,7 @@ impl AnchorGroupBuilder {
     }
 
     pub fn set_source(&mut self, source: Source) -> &mut Self {
-        self.source = Some(source.get_name());
+        self.source = Some(source);
         self
     }
 
@@ -226,7 +239,7 @@ impl AnchorGroupBuilder {
             source: self
                 .source
                 .clone()
-                .unwrap_or_else(|| "INPUT_CONTEXT".to_string()),
+                .unwrap_or_else(|| Source::INPUT_CONTEXT()),
             registry_tags: self.registry_tags.clone(),
         };
 
@@ -237,14 +250,14 @@ impl AnchorGroupBuilder {
     }
 }
 
-pub(crate) trait FeathrClientModifier {
+pub(crate) trait FeathrProjectModifier {
     fn insert_anchor(&self, group: &str, anchor: AnchorFeatureImpl)
         -> Result<AnchorFeature, Error>;
     fn insert_derived(&self, derived: DerivedFeatureImpl) -> Result<DerivedFeature, Error>;
     fn insert_source(&self, source: SourceImpl) -> Result<Source, Error>;
 }
 
-impl FeathrClientModifier for Arc<RwLock<FeathrClientImpl>> {
+impl FeathrProjectModifier for Arc<RwLock<FeathrProjectImpl>> {
     fn insert_anchor(
         &self,
         group: &str,

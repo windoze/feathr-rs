@@ -6,7 +6,7 @@ use std::{
 use serde::{ser::SerializeStruct, Deserialize, Serialize};
 
 use crate::{
-    client::{FeathrClientImpl, FeathrClientModifier},
+    project::{FeathrProjectImpl, FeathrProjectModifier},
     Error, FeatureType, Transformation, TypedKey,
 };
 
@@ -23,7 +23,7 @@ where
 }
 
 pub struct AnchorFeature {
-    pub(crate) owner: Arc<RwLock<FeathrClientImpl>>,
+    pub(crate) owner: Arc<RwLock<FeathrProjectImpl>>,
     pub(crate) inner: Arc<AnchorFeatureImpl>,
 }
 
@@ -66,7 +66,7 @@ impl Feature for AnchorFeature {
 }
 
 pub struct DerivedFeature {
-    pub(crate) owner: Arc<RwLock<FeathrClientImpl>>,
+    pub(crate) owner: Arc<RwLock<FeathrProjectImpl>>,
     pub(crate) inner: Arc<DerivedFeatureImpl>,
 }
 
@@ -107,7 +107,7 @@ impl Feature for DerivedFeature {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct FeatureBase {
     #[serde(skip)]
     pub(crate) name: String,
@@ -125,7 +125,7 @@ pub(crate) struct FeatureBase {
     pub(crate) registry_tags: HashMap<String, String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct AnchorFeatureImpl {
     #[serde(flatten)]
     pub(crate) base: FeatureBase,
@@ -184,7 +184,7 @@ impl Feature for AnchorFeatureImpl {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
 pub(crate) struct InputFeature {
     pub(crate) key: Vec<TypedKey>,
     pub(crate) name: String,
@@ -209,7 +209,7 @@ impl Serialize for InputFeature {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct DerivedFeatureImpl {
     #[serde(flatten)]
     pub(crate) base: FeatureBase,

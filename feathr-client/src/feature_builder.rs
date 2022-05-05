@@ -1,10 +1,10 @@
-use std::{sync::{Arc, RwLock}, collections::HashMap};
+use std::{sync::{Arc, RwLock}, collections::{HashMap, HashSet}};
 
-use crate::{client::{FeathrClientImpl, FeathrClientModifier}, FeatureType, Transformation, TypedKey, feature::{FeatureBase, AnchorFeatureImpl, AnchorFeature, InputFeature, DerivedFeatureImpl, DerivedFeature, Feature}, Error};
+use crate::{project::{FeathrProjectImpl, FeathrProjectModifier}, FeatureType, Transformation, TypedKey, feature::{FeatureBase, AnchorFeatureImpl, AnchorFeature, InputFeature, DerivedFeatureImpl, DerivedFeature, Feature}, Error};
 
 #[derive(Debug)]
 pub struct AnchorFeatureBuilder {
-    pub(crate) owner: Arc<RwLock<FeathrClientImpl>>,
+    pub(crate) owner: Arc<RwLock<FeathrProjectImpl>>,
     group: String,
     name: String,
     feature_type: Option<FeatureType>,
@@ -15,7 +15,7 @@ pub struct AnchorFeatureBuilder {
 }
 
 impl AnchorFeatureBuilder {
-    pub(crate) fn new(owner: Arc<RwLock<FeathrClientImpl>>, group: &str, name: &str) -> Self {
+    pub(crate) fn new(owner: Arc<RwLock<FeathrProjectImpl>>, group: &str, name: &str) -> Self {
         Self {
             owner,
             group: group.to_string(),
@@ -35,6 +35,11 @@ impl AnchorFeatureBuilder {
 
     pub fn set_transform(&mut self, transform: Transformation) -> &mut Self {
         self.transform = Some(transform);
+        self
+    }
+
+    pub fn set_keys(&mut self, keys: &[TypedKey]) -> &mut Self {
+        self.keys = keys.iter().map(|k| k.to_owned()).collect();
         self
     }
 
@@ -82,7 +87,7 @@ impl AnchorFeatureBuilder {
 }
 #[derive(Debug)]
 pub struct DerivedFeatureBuilder {
-    pub(crate) owner: Arc<RwLock<FeathrClientImpl>>,
+    pub(crate) owner: Arc<RwLock<FeathrProjectImpl>>,
     name: String,
     feature_type: Option<FeatureType>,
     transform: Option<Transformation>,
@@ -93,7 +98,7 @@ pub struct DerivedFeatureBuilder {
 }
 
 impl DerivedFeatureBuilder {
-    pub(crate) fn new(owner: Arc<RwLock<FeathrClientImpl>>, name: &str) -> Self {
+    pub(crate) fn new(owner: Arc<RwLock<FeathrProjectImpl>>, name: &str) -> Self {
         Self {
             owner,
             name: name.to_string(),
@@ -116,6 +121,11 @@ impl DerivedFeatureBuilder {
         self
     }
 
+    pub fn set_keys(&mut self, keys: &[TypedKey]) -> &mut Self {
+        self.keys = keys.iter().map(|k| k.to_owned()).collect();
+        self
+    }
+
     pub fn add_tag(&mut self, key: &str, value: &str) -> &mut Self {
         self.registry_tags
             .insert(key.to_string(), value.to_string());
@@ -131,6 +141,19 @@ impl DerivedFeatureBuilder {
     }
 
     pub fn build(&mut self) -> Result<DerivedFeature, Error> {
+        // Validation
+        let key_alias: HashSet<String> = self.input_features.iter().flat_map(|i| {
+            i.key.iter().map(|k| {
+                k.key_column_alias.to_owned().unwrap_or_else(|| k.key_column.to_owned())
+            })
+        }).collect();
+        for k in self.keys.iter() {
+            let ka = k.key_column_alias.to_owned().unwrap_or_else(|| k.key_column.to_owned());
+            if !key_alias.contains(&ka) {
+                return Err(Error::InvalidDerivedKeyAlias(self.name.to_owned(), ka, serde_json::to_string(&key_alias).unwrap()));
+            }
+        }
+
         let derived = DerivedFeatureImpl {
             base: FeatureBase {
                 name: self.name.clone(),

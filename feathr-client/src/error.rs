@@ -2,7 +2,7 @@ use std::sync::PoisonError;
 
 use thiserror::Error;
 
-#[derive(Clone, Debug, Error)]
+#[derive(Debug, Error)]
 pub enum Error {
     #[error("{0} is not a valid duration value")]
     DurationError(String),
@@ -33,6 +33,15 @@ pub enum Error {
 
     #[error("Source {0} has neither dbtable nor query set")]
     SourceNoQuery(String),
+
+    #[error("For anchors of non-INPUT_CONTEXT source, key of feature {0} should be explicitly specified and not left blank")]
+    DummyKeyUsedWithInputContext(String),
+
+    #[error("Anchor feature {0} has different key alias than other features in the anchor group {1}")]
+    InvalidKeyAlias(String, String),
+
+    #[error("key alias {1} in derived feature {0} must come from its input features key alias list {2}")]
+    InvalidDerivedKeyAlias(String, String, String),
 
     #[error("{0}")]
     SyncError(String),
