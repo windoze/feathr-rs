@@ -45,6 +45,39 @@ pub enum Error {
 
     #[error("{0}")]
     SyncError(String),
+
+    #[error(transparent)]
+    VarError(#[from] std::env::VarError),
+
+    #[error(transparent)]
+    LivyClientError(#[from] livy_client::LivyClientError),
+
+    #[error(transparent)]
+    ClientCredentialError(#[from] azure_identity::client_credentials_flow::ClientCredentialError),
+
+    #[error(transparent)]
+    AzureStorageError(#[from] azure_storage::Error),
+
+    #[error("Invalid Url {0}")]
+    InvalidUrl(String),
+
+    #[error("Timeout")]
+    Timeout,
+
+    #[error(transparent)]
+    ReqwestError(#[from] reqwest::Error),
+
+    #[error(transparent)]
+    IoError(#[from] std::io::Error),
+
+    #[error("{0}")]
+    InvalidConfig(String),
+
+    #[error(transparent)]
+    JsonError(#[from] serde_json::Error),
+
+    #[error(transparent)]
+    YamlError(#[from] serde_yaml::Error),
 }
 
 impl<Guard> From<PoisonError<Guard>> for Error {

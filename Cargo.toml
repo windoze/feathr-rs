@@ -3,5 +3,6 @@
 members = [
     "feathr-client",
     "livy-client",
+    "dbfs-client",
 ]
 

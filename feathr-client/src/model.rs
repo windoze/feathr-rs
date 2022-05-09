@@ -1,8 +1,8 @@
 use std::time::Duration;
 
-use serde::{Serialize, Serializer, Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::utils::{str_to_dur, dur_to_string};
+use crate::utils::{dur_to_string, str_to_dur};
 
 #[allow(non_camel_case_types)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -236,9 +236,9 @@ where
     match s {
         Some(s) => match str_to_dur(&s) {
             Ok(d) => Ok(Some(d)),
-            Err(e) => Err(serde::de::Error::custom(e.to_string()))
-        }
-        None => Ok(None)    
+            Err(e) => Err(serde::de::Error::custom(e.to_string())),
+        },
+        None => Ok(None),
     }
 }
 
@@ -273,6 +273,19 @@ pub enum Transformation {
     },
 }
 
+impl Transformation {
+    pub fn window_agg(def_expr: &str, agg_func: Aggregation, window: Duration) -> Result<Self, crate::Error> {
+        Ok(Self::WindowAgg {
+            def_expr: def_expr.to_string(),
+            agg_func: Some(agg_func),
+            window: Some(window),
+            group_by: None,
+            filter: None,
+            limit: None,
+        })
+    }
+}
+
 impl<T> From<T> for Transformation
 where
     T: AsRef<str>,
@@ -285,4 +298,3 @@ where
         }
     }
 }
-

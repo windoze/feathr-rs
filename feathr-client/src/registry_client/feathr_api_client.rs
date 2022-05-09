@@ -1,8 +1,15 @@
 use async_trait::async_trait;
 
-use crate::{FeatureRegistry, FeathrProject, Error};
+use crate::{FeatureRegistry, FeathrProject, Error, YamlSource};
 
-pub struct FeathrApiClient {}
+pub struct FeathrApiClient;
+
+impl FeathrApiClient {
+    pub fn from_var_source(var_source: &YamlSource) -> Result<Self, crate::Error> {
+        // TODO:
+        Ok(Self)
+    }
+}
 
 #[async_trait]
 impl FeatureRegistry for FeathrApiClient {
@@ -10,7 +17,7 @@ impl FeatureRegistry for FeathrApiClient {
         todo!()
     }
 
-    async fn load_project(&self) -> Result<FeathrProject, Error> {
+    async fn load_project(&self, name: &str) -> Result<FeathrProject, Error> {
         todo!()
     }
 }

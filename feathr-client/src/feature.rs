@@ -65,6 +65,12 @@ impl Feature for AnchorFeature {
     }
 }
 
+impl ToString for AnchorFeature {
+    fn to_string(&self) -> String {
+        self.get_name()
+    }
+}
+
 pub struct DerivedFeature {
     pub(crate) owner: Arc<RwLock<FeathrProjectImpl>>,
     pub(crate) inner: Arc<DerivedFeatureImpl>,
@@ -104,6 +110,12 @@ impl Feature for DerivedFeature {
 
     fn get_registry_tags(&self) -> HashMap<String, String> {
         self.inner.base.registry_tags.clone()
+    }
+}
+
+impl ToString for DerivedFeature {
+    fn to_string(&self) -> String {
+        self.get_name()
     }
 }
 

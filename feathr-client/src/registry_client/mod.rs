@@ -12,5 +12,5 @@ use crate::{FeathrProject, Error};
 #[async_trait]
 pub trait FeatureRegistry {
     async fn save_project(&self, project: &FeathrProject) -> Result<(), Error>;
-    async fn load_project(&self) -> Result<FeathrProject, Error>;
+    async fn load_project(&self, name: &str) -> Result<FeathrProject, Error>;
 }

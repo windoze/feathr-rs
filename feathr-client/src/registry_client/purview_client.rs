@@ -10,7 +10,7 @@ impl FeatureRegistry for PurviewClient {
         todo!()
     }
 
-    async fn load_project(&self) -> Result<FeathrProject, Error> {
+    async fn load_project(&self, name: &str) -> Result<FeathrProject, Error> {
         todo!()
     }
 }

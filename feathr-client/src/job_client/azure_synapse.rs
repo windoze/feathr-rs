@@ -1,49 +1,18 @@
-use std::env;
-
 use async_trait::async_trait;
 use azure_identity::token_credentials::DefaultAzureCredential;
 use azure_storage::storage_shared_key_credential::StorageSharedKeyCredential;
 use azure_storage_datalake::clients::{DataLakeClient, PathClient};
 use bytes::Bytes;
 use livy_client::{
-    AadAuthenticator, AzureSynapseClientBuilder, ClusterSize, LivyClient, LivyClientError,
-    LivyStates, SparkRequest,
+    AadAuthenticator, AzureSynapseClientBuilder, ClusterSize, LivyClient, LivyStates, SparkRequest,
 };
 use log::debug;
 use reqwest::Url;
-use thiserror::Error;
 use tokio::io::AsyncReadExt;
 
-use crate::{JobClient, Logged};
+use crate::{JobClient, JobId, Logged};
 
-use super::InvalidUrl;
-
-#[derive(Debug, Error)]
-pub enum AzureSynapseError {
-    #[error(transparent)]
-    LivyClientError(#[from] LivyClientError),
-
-    #[error(transparent)]
-    VarError(#[from] env::VarError),
-
-    #[error(transparent)]
-    ClientCredentialError(#[from] azure_identity::client_credentials_flow::ClientCredentialError),
-
-    #[error(transparent)]
-    AzureStorageError(#[from] azure_storage::Error),
-
-    #[error(transparent)]
-    InvalidUrl(#[from] super::InvalidUrl),
-
-    #[error(transparent)]
-    Timeout(#[from] super::Timeout),
-
-    #[error(transparent)]
-    ReqwestError(#[from] reqwest::Error),
-
-    #[error(transparent)]
-    IoError(#[from] std::io::Error),
-}
+use super::env_utils::VarSource;
 
 pub struct AzureSynapseClient {
     livy_client: LivyClient<AadAuthenticator>,
@@ -62,7 +31,7 @@ impl AzureSynapseClient {
         storage_key: &str,
         container: &str,
         workspace_dir: &str,
-    ) -> Result<Self, AzureSynapseError> {
+    ) -> Result<Self, crate::Error> {
         Ok(Self {
             livy_client: AzureSynapseClientBuilder::with_credential(credential)?
                 .url(url)
@@ -81,7 +50,7 @@ impl AzureSynapseClient {
         })
     }
 
-    pub fn default() -> Result<Self, AzureSynapseError> {
+    pub fn default() -> Result<Self, crate::Error> {
         let (container, storage_account, workspace_dir) =
             parse_abfs(std::env::var("SYNAPSE_WORKSPACE_DIR")?)?;
         Ok(Self {
@@ -105,15 +74,45 @@ impl AzureSynapseClient {
 
 #[async_trait]
 impl JobClient for AzureSynapseClient {
-    type Error = AzureSynapseError;
-    type JobId = u64;
     type JobStatus = LivyStates;
 
-    async fn write_remote_file(
-        &self,
-        path: &str,
-        content: &[u8],
-    ) -> Result<String, AzureSynapseError> {
+    fn from_var_source<T>(var_source: &T) -> Result<Self, crate::Error>
+    where
+        T: VarSource,
+    {
+        let (container, storage_account, workspace_dir) =
+            parse_abfs(var_source.get_environment_variable(&[
+                "spark_config",
+                "azure_synapse",
+                "workspace_dir",
+            ])?)?;
+        Ok(Self {
+            livy_client: AzureSynapseClientBuilder::default()
+                .url(var_source.get_environment_variable(&[
+                    "spark_config",
+                    "azure_synapse",
+                    "dev_url",
+                ])?)
+                .pool(var_source.get_environment_variable(&[
+                    "spark_config",
+                    "azure_synapse",
+                    "pool_name",
+                ])?)
+                .build()?,
+            storage_client: DataLakeClient::new(
+                StorageSharedKeyCredential::new(
+                    var_source.get_environment_variable(&["ADLS_ACCOUNT"])?,
+                    var_source.get_environment_variable(&["ADLS_KEY"])?,
+                ),
+                None,
+            ),
+            storage_account,
+            container,
+            workspace_dir: workspace_dir.trim_start_matches("/").to_string(),
+        })
+    }
+
+    async fn write_remote_file(&self, path: &str, content: &[u8]) -> Result<String, crate::Error> {
         let (container, _, path) = parse_abfs(path)?;
         debug!("Container: {}", container);
         debug!("Path: {}", path);
@@ -139,26 +138,16 @@ impl JobClient for AzureSynapseClient {
             .log()?;
         http_to_abfs(file_client.url().log()?)
     }
-    async fn read_remote_file(&self, url: &str) -> Result<Bytes, AzureSynapseError> {
-        let (container, _, dir) = parse_abfs(url)?;
-        debug!("Container: {}", container);
-        debug!("Path: {}", dir);
-        let fs_client = self
-            .storage_client
-            .clone()
-            .into_file_system_client(container);
-        let file_client = fs_client.get_file_client(dir);
-        Ok(file_client.read().into_future().await?.data)
-    }
-
-    async fn submit_job(
+    async fn submit_job<T>(
         &self,
+        var_source: &T,
         request: super::SubmitJobRequest,
-    ) -> Result<Self::JobId, AzureSynapseError> {
-        let main_jar_file = request.main_jar_path.unwrap_or_else(|| {
-            debug!("Main JAR file omitted, using default.");
-            "wasbs://public@azurefeathrstorage.blob.core.windows.net/feathr-assembly-0.1.0-SNAPSHOT.jar".to_string()
-        });
+    ) -> Result<JobId, crate::Error>
+    where
+        T: VarSource + Send + Sync,
+    {
+        let args = self.get_arguments(var_source, &request).await?;
+        let main_jar_file = request.main_jar_path;
         let mut orig_files: Vec<String> = vec![];
         let mut orig_jars: Vec<String> = vec![];
 
@@ -191,7 +180,12 @@ impl JobClient for AzureSynapseClient {
         debug!("Main executable file: {}", executable);
 
         let job = SparkRequest {
-            args: request.arguments,
+            args,
+            class_name: if py_files.is_empty() {
+                request.main_class_name
+            } else {
+                Default::default()
+            },
             conf: request.configuration,
             cluster_size: ClusterSize::MEDIUM(), // TODO:
             file: executable,
@@ -203,7 +197,9 @@ impl JobClient for AzureSynapseClient {
             ..Default::default()
         };
         debug!("Job request: {:#?}", job);
-        Ok(self.livy_client.create_batch_job(job).await?.id)
+        let jid = self.livy_client.create_batch_job(job).await?.id;
+        debug!("Job submitted, id is {}", jid);
+        Ok(JobId(jid))
     }
     fn is_ended_status(&self, status: Self::JobStatus) -> bool {
         matches!(
@@ -215,29 +211,34 @@ impl JobClient for AzureSynapseClient {
                 | LivyStates::Busy
         )
     }
-    async fn get_job_status(
-        &self,
-        job_id: Self::JobId,
-    ) -> Result<Self::JobStatus, AzureSynapseError> {
-        Ok(self.livy_client.get_batch_job(job_id).await?.state)
+    async fn get_job_status(&self, job_id: JobId) -> Result<Self::JobStatus, crate::Error> {
+        Ok(self.livy_client.get_batch_job(job_id.0).await?.state)
     }
-    async fn get_job_log(&self, job_id: Self::JobId) -> Result<String, AzureSynapseError> {
+    async fn get_job_log(&self, job_id: JobId) -> Result<String, crate::Error> {
         Ok(self
             .livy_client
-            .get_batch_job_driver_stdout_log(job_id)
+            .get_batch_job_driver_stdout_log(job_id.0)
             .await?)
     }
-    async fn get_job_output_url(
-        &self,
-        job_id: Self::JobId,
-    ) -> Result<Option<String>, AzureSynapseError> {
-        let job = self.livy_client.get_batch_job(job_id).await?;
+    async fn get_job_output_url(&self, job_id: JobId) -> Result<Option<String>, crate::Error> {
+        let job = self.livy_client.get_batch_job(job_id.0).await?;
         Ok(job
             .tags
             .map(|t| t.get(super::OUTPUT_PATH_TAG).map(|s| s.to_owned()))
             .flatten())
     }
-    async fn upload_or_get_url(&self, path: &str) -> Result<String, Self::Error> {
+    async fn read_remote_file(&self, url: &str) -> Result<Bytes, crate::Error> {
+        let (container, _, dir) = parse_abfs(url)?;
+        debug!("Container: {}", container);
+        debug!("Path: {}", dir);
+        let fs_client = self
+            .storage_client
+            .clone()
+            .into_file_system_client(container);
+        let file_client = fs_client.get_file_client(dir);
+        Ok(file_client.read().into_future().await?.data)
+    }
+    async fn upload_or_get_url(&self, path: &str) -> Result<String, crate::Error> {
         let bytes = if path.starts_with("http:") || path.starts_with("https:") {
             // It's a Internet file
             reqwest::Client::new()
@@ -248,12 +249,14 @@ impl JobClient for AzureSynapseClient {
                 .await?
         } else if path.contains("://") {
             // It's a file on the storage
-            let (container, storage, _) = parse_abfs(path)?;
-            if container == self.container && storage == self.storage_account {
-                // The file is located in this container of this storage, no need to download and upload again
-                return Ok(path.to_string());
-            }
-            self.read_remote_file(path).await?
+            // let (container, storage, _) = parse_abfs(path)?;
+            // if container == self.container && storage == self.storage_account {
+            //     // The file is located in this container of this storage, no need to download and upload again
+            //     return Ok(path.to_string());
+            // }
+            // debug!("Transferring from remote storage {} to local storage {}", storage, self.storage_account);
+            // self.read_remote_file(path).await?
+            return Ok(path.to_string());
         } else {
             // Local file
             let mut v: Vec<u8> = vec![];
@@ -285,14 +288,15 @@ impl JobClient for AzureSynapseClient {
  * Convert Storage URL to Spark compatible format:
  * https://storage/container/path -> abfss://container@storage/path
  */
-fn http_to_abfs<T: AsRef<str>>(url: T) -> Result<String, AzureSynapseError> {
-    let url = Url::parse(url.as_ref()).map_err(|_| InvalidUrl(url.as_ref().to_string()))?;
+fn http_to_abfs<T: AsRef<str>>(url: T) -> Result<String, crate::Error> {
+    let url =
+        Url::parse(url.as_ref()).map_err(|_| crate::Error::InvalidUrl(url.as_ref().to_string()))?;
     match url.scheme().to_lowercase().as_str() {
         "http" | "https" => {
             let schema = url.scheme().to_lowercase().replace("http", "abfs");
             let host = url
                 .host()
-                .ok_or_else(|| InvalidUrl(url.to_string()))?
+                .ok_or_else(|| crate::Error::InvalidUrl(url.to_string()))?
                 .to_string();
             let path: Vec<String> = url
                 .path()
@@ -303,22 +307,22 @@ fn http_to_abfs<T: AsRef<str>>(url: T) -> Result<String, AzureSynapseError> {
                 .collect();
             let container = path
                 .get(0)
-                .ok_or_else(|| InvalidUrl(url.to_string()))?
+                .ok_or_else(|| crate::Error::InvalidUrl(url.to_string()))?
                 .to_owned();
             let dir = path[1..path.len()].join("/");
             Ok(format!("{schema}://{container}@{host}/{dir}"))
         }
-        _ => Err(InvalidUrl(url.to_string()).into()),
+        _ => Err(crate::Error::InvalidUrl(url.to_string())),
     }
 }
 
-fn parse_abfs<T: AsRef<str>>(abfs_url: T) -> Result<(String, String, String), AzureSynapseError> {
-    let url =
-        Url::parse(abfs_url.as_ref()).map_err(|_| InvalidUrl(abfs_url.as_ref().to_string()))?;
+fn parse_abfs<T: AsRef<str>>(abfs_url: T) -> Result<(String, String, String), crate::Error> {
+    let url = Url::parse(abfs_url.as_ref())
+        .map_err(|_| crate::Error::InvalidUrl(abfs_url.as_ref().to_string()))?;
     let container = url.username().to_string();
     let host: Vec<String> = url
         .host()
-        .ok_or_else(|| InvalidUrl(url.to_string()))?
+        .ok_or_else(|| crate::Error::InvalidUrl(url.to_string()))?
         .to_string()
         .split(".")
         .into_iter()
@@ -328,7 +332,7 @@ fn parse_abfs<T: AsRef<str>>(abfs_url: T) -> Result<(String, String, String), Az
     let account_name = host
         .into_iter()
         .next()
-        .ok_or_else(|| InvalidUrl(url.to_string()))?;
+        .ok_or_else(|| crate::Error::InvalidUrl(url.to_string()))?;
     let path = url.path().trim_start_matches("/").to_string();
     Ok((container, account_name, path))
 }

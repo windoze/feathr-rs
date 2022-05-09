@@ -7,7 +7,10 @@ use serde::Serialize;
 
 use crate::feature::{AnchorFeature, AnchorFeatureImpl, DerivedFeature, DerivedFeatureImpl};
 use crate::feature_builder::{AnchorFeatureBuilder, DerivedFeatureBuilder};
-use crate::{Error, Feature, HdfsSourceBuilder, JdbcSourceBuilder, Source, SourceImpl, TypedKey};
+use crate::{
+    Error, Feature, FeatureQuery, HdfsSourceBuilder, JdbcSourceBuilder, ObservationSettings,
+    Source, SourceImpl, SubmitJobRequestBuilder, TypedKey,
+};
 
 #[derive(Debug)]
 pub struct FeathrProject {
@@ -16,8 +19,9 @@ pub struct FeathrProject {
 }
 
 impl FeathrProject {
-    pub fn new() -> Self {
+    pub fn new(name: &str) -> Self {
         let inner = Arc::new(RwLock::new(FeathrProjectImpl {
+            name: name.to_string(),
             anchor_groups: Default::default(),
             derivations: Default::default(),
             sources: Default::default(),
@@ -80,10 +84,63 @@ impl FeathrProject {
         let s = serde_json::to_string_pretty(&*r).unwrap();
         Ok(s)
     }
+
+    pub fn feature_join_job(
+        &self,
+        observation_settings: ObservationSettings,
+        feature_query: Vec<FeatureQuery>,
+        output: &str,
+    ) -> Result<SubmitJobRequestBuilder, Error> {
+        Ok(SubmitJobRequestBuilder::new_join(
+            format!("{}_feathr_feature_join_job", self.inner.read()?.name),
+            observation_settings.observation_path.to_string(),
+            self.get_feature_config()?,
+            self.get_feature_join_config(observation_settings, feature_query, output)?,
+        ))
+    }
+
+    pub fn feature_gen_job(&self) -> Result<SubmitJobRequestBuilder, Error> {
+        Ok(SubmitJobRequestBuilder::new_gen(
+            format!("{}_feathr_feature_materialization_job", self.inner.read()?.name),
+            Default::default(),     // TODO:
+            self.get_feature_config()?,
+            self.get_feature_gen_config()?,
+        ))
+    }
+
+    pub(crate) fn get_feature_join_config(
+        &self,
+        observation_settings: ObservationSettings,
+        feature_query: Vec<FeatureQuery>,
+        output: &str,
+    ) -> Result<String, Error> {
+        // TODO: Validate feature names
+
+        #[derive(Clone, Debug, Serialize)]
+        #[serde(rename_all = "camelCase")]
+        struct FeatureJoinConfig {
+            #[serde(flatten)]
+            observation_settings: ObservationSettings,
+            feature_list: Vec<FeatureQuery>,
+            output_path: String,
+        }
+        let cfg = FeatureJoinConfig {
+            observation_settings,
+            feature_list: feature_query,
+            output_path: output.to_string(),
+        };
+        Ok(serde_json::to_string_pretty(&cfg)?)
+    }
+
+    pub(crate) fn get_feature_gen_config(&self) -> Result<String, Error> {
+        todo!()
+    }
 }
 
 #[derive(Debug, Serialize)]
 pub(crate) struct FeathrProjectImpl {
+    #[serde(skip_serializing)]
+    name: String,
     #[serde(rename = "anchors")]
     anchor_groups: HashMap<String, AnchorGroup>,
     derivations: HashMap<String, Arc<DerivedFeatureImpl>>,
@@ -283,5 +340,40 @@ impl FeathrProjectModifier for Arc<RwLock<FeathrProjectImpl>> {
         Ok(Source {
             inner: w.insert_source(source),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::*;
+
+    #[test]
+    fn it_works() {
+        let proj = FeathrProject::new("p1");
+        let s = proj.jdbc_source_builder("h1")
+            .set_auth(JdbcSourceAuth::Userpass)
+            .set_url("jdbc:sqlserver://bet-test.database.windows.net:1433;database=bet-test")
+            .set_dbtable("AzureRegions")
+            .build()
+            .unwrap();
+        let g1 = proj.group_builder("g1").set_source(s).build().unwrap();
+        let k1 = TypedKey::new("c1", ValueType::INT32);
+        let k2 = TypedKey::new("c2", ValueType::INT32);
+        let f = proj
+            .anchor_builder(&g1, "f1")
+            .set_type(FeatureType::INT32)
+            .set_transform("x".into())
+            .set_keys(&[k1, k2])
+            .build()
+            .unwrap();
+        proj
+            .derived_builder("d1")
+            .add_input(f)
+            .set_transform("1".into())
+            .set_type(FeatureType::INT32)
+            .build()
+            .unwrap();
+        let s = proj.get_feature_config().unwrap();
+        println!("{}", s);
     }
 }
