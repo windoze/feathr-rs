@@ -17,6 +17,7 @@ impl FeathrApiClient {
     }
 }
 
+#[allow(unused_variables)]
 #[async_trait]
 impl FeatureRegistry for FeathrApiClient {
     async fn save_project(&self, project: &FeathrProject) -> Result<(), Error> {

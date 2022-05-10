@@ -123,7 +123,7 @@ impl Source {
     #[allow(non_snake_case)]
     pub fn INPUT_CONTEXT() -> Self {
         Self {
-            inner: Arc::new(SourceImpl::INPUT_CONTEXT())
+            inner: Arc::new(SourceImpl::INPUT_CONTEXT()),
         }
     }
 }
@@ -131,23 +131,18 @@ impl Source {
 pub struct HdfsSourceBuilder {
     owner: Arc<RwLock<FeathrProjectImpl>>,
     name: String,
-    path: Option<String>,
+    path: String,
     time_window_parameters: Option<TimeWindowParameters>,
 }
 
 impl HdfsSourceBuilder {
-    pub(crate) fn new(owner: Arc<RwLock<FeathrProjectImpl>>, name: &str) -> Self {
+    pub(crate) fn new(owner: Arc<RwLock<FeathrProjectImpl>>, name: &str, path: &str) -> Self {
         Self {
             owner,
             name: name.to_string(),
-            path: None,
+            path: path.to_string(),
             time_window_parameters: None,
         }
-    }
-
-    pub fn path(&mut self, path: &str) -> &mut Self {
-        self.path = Some(path.to_string());
-        self
     }
 
     pub fn time_window(
@@ -166,10 +161,7 @@ impl HdfsSourceBuilder {
         let imp = SourceImpl {
             name: self.name.to_string(),
             location: SourceLocation::Hdfs {
-                path: self
-                    .path
-                    .clone()
-                    .ok_or(Error::MissingHdfsUrl(self.name.to_string()))?,
+                path: self.path.clone(),
             },
             time_window_parameters: self.time_window_parameters.clone(),
         };
@@ -179,7 +171,7 @@ impl HdfsSourceBuilder {
 pub struct JdbcSourceBuilder {
     owner: Arc<RwLock<FeathrProjectImpl>>,
     name: String,
-    url: Option<String>,
+    url: String,
     dbtable: Option<String>,
     query: Option<String>,
     auth: Option<JdbcAuth>,
@@ -194,11 +186,11 @@ pub enum JdbcSourceAuth {
 }
 
 impl JdbcSourceBuilder {
-    pub(crate) fn new(owner: Arc<RwLock<FeathrProjectImpl>>, name: &str) -> Self {
+    pub(crate) fn new(owner: Arc<RwLock<FeathrProjectImpl>>, name: &str, url: &str) -> Self {
         Self {
             owner,
             name: name.to_string(),
-            url: None,
+            url: url.to_string(),
             dbtable: None,
             query: None,
             auth: None,
@@ -206,22 +198,17 @@ impl JdbcSourceBuilder {
         }
     }
 
-    pub fn set_url(&mut self, url: &str) -> &mut Self {
-        self.url = Some(url.to_string());
-        self
-    }
-
-    pub fn set_dbtable(&mut self, dbtable: &str) -> &mut Self {
+    pub fn dbtable(&mut self, dbtable: &str) -> &mut Self {
         self.dbtable = Some(dbtable.to_string());
         self
     }
 
-    pub fn set_query(&mut self, query: &str) -> &mut Self {
+    pub fn query(&mut self, query: &str) -> &mut Self {
         self.query = Some(query.to_string());
         self
     }
 
-    pub fn set_auth(&mut self, auth: JdbcSourceAuth) -> &mut Self {
+    pub fn auth(&mut self, auth: JdbcSourceAuth) -> &mut Self {
         match auth {
             JdbcSourceAuth::Anonymous => self.auth = Some(JdbcAuth::Anonymous),
             JdbcSourceAuth::Userpass => {
@@ -239,7 +226,7 @@ impl JdbcSourceBuilder {
         self
     }
 
-    pub fn set_time_window_parameters(
+    pub fn time_window(
         &mut self,
         timestamp_column: &str,
         timestamp_column_format: &str,
@@ -255,10 +242,7 @@ impl JdbcSourceBuilder {
         let imp = SourceImpl {
             name: self.name.to_string(),
             location: SourceLocation::Jdbc {
-                url: self
-                    .url
-                    .clone()
-                    .ok_or(Error::MissingJdbcUrl(self.name.to_string()))?,
+                url: self.url.clone(),
                 dbtable: self.dbtable.to_owned(),
                 query: self.query.to_owned(),
                 auth: self.auth.clone().unwrap_or(JdbcAuth::Anonymous),

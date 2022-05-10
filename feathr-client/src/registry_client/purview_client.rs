@@ -4,6 +4,7 @@ use crate::{FeatureRegistry, FeathrProject, Error};
 
 pub struct PurviewClient {}
 
+#[allow(unused_variables)]
 #[async_trait]
 impl FeatureRegistry for PurviewClient {
     async fn save_project(&self, project: &FeathrProject) -> Result<(), Error> {

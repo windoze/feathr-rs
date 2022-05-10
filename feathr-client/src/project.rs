@@ -96,15 +96,15 @@ impl FeathrProject {
     /**
      * Start creating a HDFS data source with given name
      */
-    pub fn hdfs_source_builder(&self, name: &str) -> HdfsSourceBuilder {
-        HdfsSourceBuilder::new(self.inner.clone(), name)
+    pub fn hdfs_source(&self, name: &str, path: &str) -> HdfsSourceBuilder {
+        HdfsSourceBuilder::new(self.inner.clone(), name, path)
     }
 
     /**
      * Start creating a JDBC data source with given name
      */
-    pub fn jdbc_source_builder(&self, name: &str) -> JdbcSourceBuilder {
-        JdbcSourceBuilder::new(self.inner.clone(), name)
+    pub fn jdbc_source(&self, name: &str, url: &str) -> JdbcSourceBuilder {
+        JdbcSourceBuilder::new(self.inner.clone(), name, url)
     }
 
     /**
@@ -250,6 +250,9 @@ impl FeathrProjectImpl {
     }
 }
 
+
+
+#[allow(dead_code)]
 #[derive(Debug)]
 struct AnchorGroupImpl {
     name: String,
@@ -427,10 +430,9 @@ mod tests {
     fn it_works() {
         let proj = FeathrProject::new("p1");
         let s = proj
-            .jdbc_source_builder("h1")
-            .set_auth(JdbcSourceAuth::Userpass)
-            .set_url("jdbc:sqlserver://bet-test.database.windows.net:1433;database=bet-test")
-            .set_dbtable("AzureRegions")
+            .jdbc_source("h1", "jdbc:sqlserver://bet-test.database.windows.net:1433;database=bet-test")
+            .auth(JdbcSourceAuth::Userpass)
+            .dbtable("AzureRegions")
             .build()
             .unwrap();
         let g1 = proj.anchor_group("g1", s).build().unwrap();

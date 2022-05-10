@@ -71,8 +71,7 @@ mod tests {
     async fn it_works() {
         let client = init().await;
         let proj = FeathrProject::new("p1");
-        let batch_source = proj.hdfs_source_builder("nycTaxiBatchSource")
-            .path("wasbs://public@azurefeathrstorage.blob.core.windows.net/sample_data/green_tripdata_2020-04.csv")
+        let batch_source = proj.hdfs_source("nycTaxiBatchSource", "wasbs://public@azurefeathrstorage.blob.core.windows.net/sample_data/green_tripdata_2020-04.csv")
             .time_window(
                 "lpep_dropoff_datetime",
                 "yyyy-MM-dd HH:mm:ss"
