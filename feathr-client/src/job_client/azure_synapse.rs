@@ -136,6 +136,7 @@ impl JobClient for AzureSynapseClient {
             .log()?;
         http_to_abfs(file_client.url().log()?)
     }
+
     async fn submit_job(
         &self,
         var_source: Arc<dyn VarSource + Send + Sync>,
@@ -197,6 +198,7 @@ impl JobClient for AzureSynapseClient {
         debug!("Job submitted, id is {}", jid);
         Ok(JobId(jid))
     }
+
     fn is_ended_status(&self, status: Self::JobStatus) -> bool {
         matches!(
             status,
@@ -207,15 +209,22 @@ impl JobClient for AzureSynapseClient {
                 | LivyStates::Busy
         )
     }
+
+    fn is_successful_status(&self, status: Self::JobStatus) -> bool {
+        status == LivyStates::Success
+    }
+
     async fn get_job_status(&self, job_id: JobId) -> Result<Self::JobStatus, crate::Error> {
         Ok(self.livy_client.get_batch_job(job_id.0).await?.state)
     }
+
     async fn get_job_log(&self, job_id: JobId) -> Result<String, crate::Error> {
         Ok(self
             .livy_client
             .get_batch_job_driver_stdout_log(job_id.0)
             .await?)
     }
+
     async fn get_job_output_url(&self, job_id: JobId) -> Result<Option<String>, crate::Error> {
         let job = self.livy_client.get_batch_job(job_id.0).await?;
         Ok(job
@@ -223,6 +232,7 @@ impl JobClient for AzureSynapseClient {
             .map(|t| t.get(super::OUTPUT_PATH_TAG).map(|s| s.to_owned()))
             .flatten())
     }
+
     async fn read_remote_file(&self, url: &str) -> Result<Bytes, crate::Error> {
         let (container, _, dir) = parse_abfs(url)?;
         debug!("Container: {}", container);
@@ -234,6 +244,7 @@ impl JobClient for AzureSynapseClient {
         let file_client = fs_client.get_file_client(dir);
         Ok(file_client.read().into_future().await?.data)
     }
+    
     async fn upload_or_get_url(&self, path: &str) -> Result<String, crate::Error> {
         let bytes = if path.starts_with("http:") || path.starts_with("https:") {
             // It's a Internet file

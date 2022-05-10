@@ -12,10 +12,10 @@ use reqwest::Url;
 use serde::Serialize;
 use tokio::io::AsyncWriteExt;
 
+use crate::VarSource;
+
 pub use azure_synapse::AzureSynapseClient;
 pub use databricks::DatabricksClient;
-
-use crate::VarSource;
 
 pub(crate) const OUTPUT_PATH_TAG: &str = "output_path";
 pub(crate) const FEATHR_JOB_JAR_PATH: &str =
@@ -70,14 +70,17 @@ where
      * Create instance from a variable source
      */
     async fn from_var_source(var_source: Arc<dyn VarSource + Send + Sync>) -> Result<Self, crate::Error>;
+
     /**
      * Create file on the remote side and returns Spark compatible URL of the file
      */
     async fn write_remote_file(&self, path: &str, content: &[u8]) -> Result<String, crate::Error>;
+
     /**
      * Read file content from a Spark compatible URL
      */
     async fn read_remote_file(&self, path: &str) -> Result<Bytes, crate::Error>;
+
     /**
      * Submit Spark job, upload files if necessary
      */
@@ -86,26 +89,41 @@ where
         var_source: Arc<dyn VarSource + Send + Sync>,
         request: SubmitJobRequest,
     ) -> Result<JobId, crate::Error>;
+
     /**
      * Check if the status indicates the job has ended
      */
     fn is_ended_status(&self, status: Self::JobStatus) -> bool;
+
+    /**
+     * Check if the status indicates the job has ended
+     */
+    fn is_successful_status(&self, status: Self::JobStatus) -> bool;
+
     /**
      * Get job status
      */
     async fn get_job_status(&self, job_id: JobId) -> Result<Self::JobStatus, crate::Error>;
+
     /**
      * Get job driver log
      */
     async fn get_job_log(&self, job_id: JobId) -> Result<String, crate::Error>;
+
     /**
      * Get job output URL in Spark compatible format
      */
     async fn get_job_output_url(&self, job_id: JobId) -> Result<Option<String>, crate::Error>;
+
     /**
      * Upload file if it's local, or move the file to the workspace if it's at somewhere else
      */
     async fn upload_or_get_url(&self, path: &str) -> Result<String, crate::Error>;
+
+    /**
+     * Construct remote URL for the filename
+     */
+    fn get_remote_url(&self, filename: &str) -> String;
 
     /**
      * Same as `upload_or_get_url`, but for multiple files
@@ -118,10 +136,6 @@ where
         Ok(ret)
     }
 
-    /**
-     * Construct remote URL for the filename
-     */
-    fn get_remote_url(&self, filename: &str) -> String;
     /**
      * Wait until the job is ended successfully or not
      */
@@ -147,6 +161,7 @@ where
         }
         Err(crate::Error::Timeout)
     }
+
     /**
      * Download a file from remote side to local cache dir
      */
@@ -158,6 +173,7 @@ where
         file.write_all_buf(&mut bytes).await?;
         Ok(())
     }
+
     /**
      * Get the file name part of the path or url
      */
@@ -420,11 +436,17 @@ impl SubmitJobRequestBuilder {
         }
     }
 
+    /**
+     * Set output path for the Spark job
+     */
     pub fn output_path(&mut self, output_path: &str) -> &mut Self {
         self.output_path = Some(output_path.to_string());
         self
     }
 
+    /**
+     * Create Spark job request
+     */
     pub fn build(&self) -> SubmitJobRequest {
         let output = self.output_path.clone().unwrap(); // TODO: Validation
         let job_tags: HashMap<String, String> = [(OUTPUT_PATH_TAG.to_string(), output.clone())]
