@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
 
 use crate::{FeatureRegistry, FeathrProject, Error, VarSource};
@@ -8,9 +10,7 @@ impl FeathrApiClient {
     /**
      * Create Api Client from a VarSource
      */
-    pub fn from_var_source<T>(_var_source: &T) -> Result<Self, crate::Error>
-    where
-        T: VarSource
+    pub async fn from_var_source(_var_source: Arc<dyn VarSource + Send + Sync>) -> Result<Self, crate::Error>
     {
         // TODO:
         Ok(Self)

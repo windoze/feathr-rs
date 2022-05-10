@@ -50,8 +50,8 @@ impl FeathrProject {
         })
     }
 
-    pub fn group_builder(&self, name: &str) -> AnchorGroupBuilder {
-        AnchorGroupBuilder::new(self.inner.clone(), name)
+    pub fn group_builder(&self, name: &str, source: Source) -> AnchorGroupBuilder {
+        AnchorGroupBuilder::new(self.inner.clone(), name, source)
     }
 
     pub fn anchor_builder(&self, group: &str, name: &str, feature_type: FeatureType) -> AnchorFeatureBuilder {
@@ -264,23 +264,18 @@ impl Serialize for AnchorGroup {
 pub struct AnchorGroupBuilder {
     owner: Arc<RwLock<FeathrProjectImpl>>,
     name: String,
-    source: Option<Source>,
+    source: Source,
     registry_tags: HashMap<String, String>,
 }
 
 impl AnchorGroupBuilder {
-    fn new(owner: Arc<RwLock<FeathrProjectImpl>>, name: &str) -> Self {
+    fn new(owner: Arc<RwLock<FeathrProjectImpl>>, name: &str, source: Source) -> Self {
         Self {
             owner,
             name: name.to_string(),
-            source: None,
+            source: source,
             registry_tags: Default::default(),
         }
-    }
-
-    pub fn source(&mut self, source: Source) -> &mut Self {
-        self.source = Some(source);
-        self
     }
 
     pub fn add_registry_tag(&mut self, key: &str, value: &str) -> &mut Self {
@@ -295,8 +290,7 @@ impl AnchorGroupBuilder {
             anchors: Default::default(),
             source: self
                 .source
-                .clone()
-                .unwrap_or_else(|| Source::INPUT_CONTEXT()),
+                .clone(),
             registry_tags: self.registry_tags.clone(),
         };
 
@@ -356,7 +350,7 @@ mod tests {
             .set_dbtable("AzureRegions")
             .build()
             .unwrap();
-        let g1 = proj.group_builder("g1").source(s).build().unwrap();
+        let g1 = proj.group_builder("g1", s).build().unwrap();
         let k1 = TypedKey::new("c1", ValueType::INT32);
         let k2 = TypedKey::new("c2", ValueType::INT32);
         let f = proj

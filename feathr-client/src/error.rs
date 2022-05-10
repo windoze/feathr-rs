@@ -75,6 +75,12 @@ pub enum Error {
 
     #[error(transparent)]
     YamlError(#[from] serde_yaml::Error),
+
+    #[error("KeyVault not configured")]
+    KeyVaultNotConfigured,
+    
+    #[error(transparent)]
+    KeyVaultError(#[from] azure_security_keyvault::Error),
 }
 
 impl<Guard> From<PoisonError<Guard>> for Error {

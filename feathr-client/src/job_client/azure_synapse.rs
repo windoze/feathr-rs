@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use azure_identity::token_credentials::DefaultAzureCredential;
 use azure_storage::storage_shared_key_credential::StorageSharedKeyCredential;
@@ -74,33 +76,31 @@ impl AzureSynapseClient {
 impl JobClient for AzureSynapseClient {
     type JobStatus = LivyStates;
 
-    fn from_var_source<T>(var_source: &T) -> Result<Self, crate::Error>
-    where
-        T: VarSource,
+    async fn from_var_source(var_source: Arc<dyn VarSource + Send + Sync>) -> Result<Self, crate::Error>
     {
         let (container, storage_account, workspace_dir) =
             parse_abfs(var_source.get_environment_variable(&[
                 "spark_config",
                 "azure_synapse",
                 "workspace_dir",
-            ])?)?;
+            ]).await?)?;
         Ok(Self {
             livy_client: AzureSynapseClientBuilder::default()
                 .url(var_source.get_environment_variable(&[
                     "spark_config",
                     "azure_synapse",
                     "dev_url",
-                ])?)
+                ]).await?)
                 .pool(var_source.get_environment_variable(&[
                     "spark_config",
                     "azure_synapse",
                     "pool_name",
-                ])?)
+                ]).await?)
                 .build()?,
             storage_client: DataLakeClient::new(
                 StorageSharedKeyCredential::new(
-                    var_source.get_environment_variable(&["ADLS_ACCOUNT"])?,
-                    var_source.get_environment_variable(&["ADLS_KEY"])?,
+                    var_source.get_environment_variable(&["ADLS_ACCOUNT"]).await?,
+                    var_source.get_environment_variable(&["ADLS_KEY"]).await?,
                 ),
                 None,
             ),
@@ -136,13 +136,11 @@ impl JobClient for AzureSynapseClient {
             .log()?;
         http_to_abfs(file_client.url().log()?)
     }
-    async fn submit_job<T>(
+    async fn submit_job(
         &self,
-        var_source: &T,
+        var_source: Arc<dyn VarSource + Send + Sync>,
         request: super::SubmitJobRequest,
     ) -> Result<JobId, crate::Error>
-    where
-        T: VarSource + Send + Sync,
     {
         let args = self.get_arguments(var_source, &request).await?;
         let main_jar_file = request.main_jar_path;

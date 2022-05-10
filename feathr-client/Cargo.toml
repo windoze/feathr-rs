@@ -23,6 +23,7 @@ azure_core = "0.1.1"
 azure_identity = "0.1.1"
 azure_storage = "0.1"
 azure_storage_datalake = "0.1.1"
+azure_security_keyvault = "0.1"
 livy-client = { path = "../livy-client", features = ["default"] }
 
 [dev-dependencies]
