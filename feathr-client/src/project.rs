@@ -9,7 +9,7 @@ use crate::feature::{AnchorFeature, AnchorFeatureImpl, DerivedFeature, DerivedFe
 use crate::feature_builder::{AnchorFeatureBuilder, DerivedFeatureBuilder};
 use crate::{
     Error, Feature, FeatureQuery, HdfsSourceBuilder, JdbcSourceBuilder, ObservationSettings,
-    Source, SourceImpl, SubmitJobRequestBuilder, TypedKey,
+    Source, SourceImpl, SubmitJobRequestBuilder, TypedKey, FeatureType,
 };
 
 #[derive(Debug)]
@@ -54,12 +54,12 @@ impl FeathrProject {
         AnchorGroupBuilder::new(self.inner.clone(), name)
     }
 
-    pub fn anchor_builder(&self, group: &str, name: &str) -> AnchorFeatureBuilder {
-        AnchorFeatureBuilder::new(self.inner.clone(), group, name)
+    pub fn anchor_builder(&self, group: &str, name: &str, feature_type: FeatureType) -> AnchorFeatureBuilder {
+        AnchorFeatureBuilder::new(self.inner.clone(), group, name, feature_type)
     }
 
-    pub fn derived_builder(&self, name: &str) -> DerivedFeatureBuilder {
-        DerivedFeatureBuilder::new(self.inner.clone(), name)
+    pub fn derived_builder(&self, name: &str, feature_type: FeatureType) -> DerivedFeatureBuilder {
+        DerivedFeatureBuilder::new(self.inner.clone(), name, feature_type)
     }
 
     pub fn hdfs_source_builder(&self, name: &str) -> HdfsSourceBuilder {
@@ -278,7 +278,7 @@ impl AnchorGroupBuilder {
         }
     }
 
-    pub fn set_source(&mut self, source: Source) -> &mut Self {
+    pub fn source(&mut self, source: Source) -> &mut Self {
         self.source = Some(source);
         self
     }
@@ -356,21 +356,19 @@ mod tests {
             .set_dbtable("AzureRegions")
             .build()
             .unwrap();
-        let g1 = proj.group_builder("g1").set_source(s).build().unwrap();
+        let g1 = proj.group_builder("g1").source(s).build().unwrap();
         let k1 = TypedKey::new("c1", ValueType::INT32);
         let k2 = TypedKey::new("c2", ValueType::INT32);
         let f = proj
-            .anchor_builder(&g1, "f1")
-            .set_type(FeatureType::INT32)
-            .set_transform("x".into())
-            .set_keys(&[k1, k2])
+            .anchor_builder(&g1, "f1", FeatureType::INT32)
+            .transform("x".into())
+            .keys(&[k1, k2])
             .build()
             .unwrap();
         proj
-            .derived_builder("d1")
+            .derived_builder("d1", FeatureType::INT32)
             .add_input(f)
-            .set_transform("1".into())
-            .set_type(FeatureType::INT32)
+            .transform("1".into())
             .build()
             .unwrap();
         let s = proj.get_feature_config().unwrap();

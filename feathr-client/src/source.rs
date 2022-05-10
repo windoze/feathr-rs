@@ -145,12 +145,12 @@ impl HdfsSourceBuilder {
         }
     }
 
-    pub fn set_path(&mut self, path: &str) -> &mut Self {
+    pub fn path(&mut self, path: &str) -> &mut Self {
         self.path = Some(path.to_string());
         self
     }
 
-    pub fn set_time_window_parameters(
+    pub fn time_window(
         &mut self,
         timestamp_column: &str,
         timestamp_column_format: &str,

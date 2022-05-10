@@ -1,13 +1,14 @@
 use std::path::Path;
 use std::fmt::Debug;
 
-use log::debug;
-
 pub trait VarSource {
     fn get_environment_variable<T>(&self, name: &[T]) -> Result<String, crate::Error>
     where
         T: AsRef<str> + Debug;
 }
+
+// TODO:
+pub struct KeyVaultSource;
 
 #[derive(Debug, Clone)]
 pub struct EnvVarSource;
@@ -84,8 +85,7 @@ mod tests {
     use dotenv;
     use std::sync::Once;
 
-    use crate::*;
-    use super::VarSource;
+    use super::*;
 
     static INIT_ENV_LOGGER: Once = Once::new();
 

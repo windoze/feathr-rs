@@ -1,5 +1,6 @@
 mod project;
 mod error;
+mod var_source;
 mod feature;
 mod feature_builder;
 mod model;
@@ -15,6 +16,7 @@ mod client;
 use log::debug;
 pub use project::{AnchorGroupBuilder, FeathrProject};
 pub use error::Error;
+pub use var_source::*;
 pub use feature::{AnchorFeature, DerivedFeature, Feature};
 pub use feature_builder::{AnchorFeatureBuilder, DerivedFeatureBuilder};
 pub use model::*;

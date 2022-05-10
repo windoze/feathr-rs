@@ -4,10 +4,16 @@ use regex::Regex;
 
 use crate::Error;
 
-pub trait ExtDuration {
+pub trait ExtDuration
+where
+    Self: Sized,
+{
     fn from_mins(minutes: u64) -> Self;
     fn from_hours(hours: u64) -> Self;
     fn from_days(days: u64) -> Self;
+    fn from_str<T>(s: T) -> Result<Self, Error>
+    where
+        T: AsRef<str>;
 }
 
 impl ExtDuration for Duration {
@@ -21,6 +27,35 @@ impl ExtDuration for Duration {
 
     fn from_days(days: u64) -> Self {
         Self::from_secs(days * 86400)
+    }
+
+    fn from_str<T>(s: T) -> Result<Self, Error>
+    where
+        T: AsRef<str>,
+    {
+        str_to_dur(s.as_ref())
+    }
+}
+
+impl ExtDuration for chrono::Duration {
+    fn from_mins(minutes: u64) -> Self {
+        Self::minutes(minutes as i64)
+    }
+
+    fn from_hours(hours: u64) -> Self {
+        Self::hours(hours as i64)
+    }
+
+    fn from_days(days: u64) -> Self {
+        Self::days(days as i64)
+    }
+
+    fn from_str<T>(s: T) -> Result<Self, Error>
+    where
+        T: AsRef<str>,
+    {
+        Ok(chrono::Duration::from_std(str_to_dur(s.as_ref())?)
+            .map_err(|_| Error::DurationError(s.as_ref().to_owned()))?)
     }
 }
 

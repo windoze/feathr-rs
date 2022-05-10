@@ -1,11 +1,17 @@
 use async_trait::async_trait;
 
-use crate::{FeatureRegistry, FeathrProject, Error, YamlSource};
+use crate::{FeatureRegistry, FeathrProject, Error, VarSource};
 
 pub struct FeathrApiClient;
 
 impl FeathrApiClient {
-    pub fn from_var_source(var_source: &YamlSource) -> Result<Self, crate::Error> {
+    /**
+     * Create Api Client from a VarSource
+     */
+    pub fn from_var_source<T>(_var_source: &T) -> Result<Self, crate::Error>
+    where
+        T: VarSource
+    {
         // TODO:
         Ok(Self)
     }

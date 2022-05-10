@@ -1,6 +1,5 @@
 mod azure_synapse;
 mod databricks;
-mod env_utils;
 
 use std::{
     collections::HashMap,
@@ -10,13 +9,13 @@ use std::{
 use async_trait::async_trait;
 use bytes::Bytes;
 use reqwest::Url;
+use serde::Serialize;
 use tokio::io::AsyncWriteExt;
 
 pub use azure_synapse::AzureSynapseClient;
 pub use databricks::DatabricksClient;
-pub use env_utils::*;
 
-use self::env_utils::VarSource;
+use crate::VarSource;
 
 pub(crate) const OUTPUT_PATH_TAG: &str = "output_path";
 pub(crate) const FEATHR_JOB_JAR_PATH: &str =
@@ -43,6 +42,12 @@ pub struct SubmitJobRequest {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct JobId(pub u64);
 
+impl std::fmt::Display for JobId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 #[async_trait]
 pub trait JobClient
 where
@@ -51,7 +56,7 @@ where
     /**
      * The job status
      */
-    type JobStatus: Clone + Send + Sync;
+    type JobStatus: Clone + Send + Sync + std::fmt::Display;
 
     /**
      * Create instance from a variable source
@@ -188,16 +193,16 @@ where
         let mut ret: Vec<String> = vec![
             "--num-parts".to_string(),
             self.get_output_num_parts(var_source)?,
-            // "--s3-config".to_string(),
-            // self.get_s3_config(var_source)?,
+            "--s3-config".to_string(),
+            self.get_s3_config(var_source)?,
             "--adls-config".to_string(),
             self.get_adls_config(var_source)?,
             "--blob-config".to_string(),
             self.get_blob_config(var_source)?,
-            // "--sql-config".to_string(),
-            // self.get_sql_config(var_source)?,
-            // "--snowflake-config".to_string(),
-            // self.get_snowflake_config(var_source)?,
+            "--sql-config".to_string(),
+            self.get_sql_config(var_source)?,
+            "--snowflake-config".to_string(),
+            self.get_snowflake_config(var_source)?,
         ];
 
         let feature_config_url = self.get_remote_url("feature.conf");
@@ -243,87 +248,119 @@ where
     where
         T: VarSource + Send,
     {
-        Ok(var_source.get_environment_variable(&["offline_store", "s3", "s3_endpoint"])?)
+        #[derive(Debug, Serialize)]
+        #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+        struct Config {
+            s3_endpoint: String,
+            s3_access_key: String,
+            s3_secret_key: String,
+        }
+        Ok(serde_json::to_string_pretty(&Config {
+            s3_endpoint: var_source.get_environment_variable(&[
+                "offline_store",
+                "s3",
+                "s3_endpoint",
+            ])?,
+            s3_access_key: var_source.get_environment_variable(&["S3_ACCESS_KEY"]).ok().unwrap_or_default(),
+            s3_secret_key: var_source.get_environment_variable(&["S3_SECRET_KEY"]).ok().unwrap_or_default(),
+        })
+        .unwrap())
     }
 
     fn get_adls_config<T>(&self, var_source: &T) -> Result<String, crate::Error>
     where
         T: VarSource + Send,
     {
-        Ok(format!(
-            r#"
-            ADLS_ACCOUNT: {}
-            ADLS_KEY: "{}"
-            "#,
-            var_source.get_environment_variable(&["ADLS_ACCOUNT"])?,
-            var_source.get_environment_variable(&["ADLS_KEY"])?
-        ))
+        #[derive(Debug, Serialize)]
+        #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+        struct Config {
+            adls_account: String,
+            adls_key: String,
+        }
+        Ok(serde_json::to_string_pretty(&Config {
+            adls_account: var_source.get_environment_variable(&["ADLS_ACCOUNT"]).ok().unwrap_or_default(),
+            adls_key: var_source.get_environment_variable(&["ADLS_KEY"]).ok().unwrap_or_default(),
+        })
+        .unwrap())
     }
 
     fn get_blob_config<T>(&self, var_source: &T) -> Result<String, crate::Error>
     where
         T: VarSource + Send,
     {
-        Ok(format!(
-            r#"
-            BLOB_ACCOUNT: {}
-            BLOB_KEY: "{}"
-            "#,
-            var_source.get_environment_variable(&["BLOB_ACCOUNT"])?,
-            var_source.get_environment_variable(&["BLOB_KEY"])?
-        ))
+        #[derive(Debug, Serialize)]
+        #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+        struct Config {
+            blob_account: String,
+            blob_key: String,
+        }
+        Ok(serde_json::to_string_pretty(&Config {
+            blob_account: var_source.get_environment_variable(&["BLOB_ACCOUNT"]).ok().unwrap_or_default(),
+            blob_key: var_source.get_environment_variable(&["BLOB_KEY"]).ok().unwrap_or_default(),
+        })
+        .unwrap())
     }
 
     fn get_sql_config<T>(&self, var_source: &T) -> Result<String, crate::Error>
     where
         T: VarSource + Send,
     {
-        Ok(format!(
-            r#"
-            JDBC_TABLE: {}
-            JDBC_USER: {}
-            JDBC_PASSWORD: {}
-            JDBC_DRIVER: {}
-            JDBC_AUTH_FLAG: {}
-            JDBC_TOKEN: {}
-            "#,
-            var_source.get_environment_variable(&["JDBC_TABLE"])?,
-            var_source.get_environment_variable(&["JDBC_USER"])?,
-            var_source.get_environment_variable(&["JDBC_PASSWORD"])?,
-            var_source.get_environment_variable(&["JDBC_DRIVER"])?,
-            var_source.get_environment_variable(&["JDBC_AUTH_FLAG"])?,
-            var_source.get_environment_variable(&["JDBC_TOKEN"])?,
-        ))
+        #[derive(Debug, Serialize)]
+        #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+        struct Config {
+            jdbc_table: String,
+            jdbc_user: String,
+            jdbc_password: String,
+            jdbc_driver: String,
+            jdbc_auth_flag: String,
+            jdbc_token: String,
+        }
+        Ok(serde_json::to_string_pretty(&Config {
+            jdbc_table: var_source.get_environment_variable(&["JDBC_TABLE"]).ok().unwrap_or_default(),
+            jdbc_user: var_source.get_environment_variable(&["JDBC_USER"]).ok().unwrap_or_default(),
+            jdbc_password: var_source.get_environment_variable(&["JDBC_PASSWORD"]).ok().unwrap_or_default(),
+            jdbc_driver: var_source.get_environment_variable(&["JDBC_DRIVER"]).ok().unwrap_or_default(),
+            jdbc_auth_flag: var_source.get_environment_variable(&["JDBC_AUTH_FLAG"]).ok().unwrap_or_default(),
+            jdbc_token: var_source.get_environment_variable(&["JDBC_TOKEN"]).ok().unwrap_or_default(),
+        })
+        .unwrap())
     }
 
     fn get_snowflake_config<T>(&self, var_source: &T) -> Result<String, crate::Error>
     where
         T: VarSource + Send,
     {
-        Ok(format!(
-            r#"
-            JDBC_SF_URL: {}
-            JDBC_SF_USER: {}
-            JDBC_SF_ROLE: {}
-            JDBC_SF_PASSWORD: {}
-            "#,
-            var_source.get_environment_variable(&["JDBC_SF_URL"])?,
-            var_source.get_environment_variable(&["JDBC_SF_USER"])?,
-            var_source.get_environment_variable(&["JDBC_SF_ROLE"])?,
-            var_source.get_environment_variable(&["JDBC_SF_PASSWORD"])?,
-        ))
+        #[derive(Debug, Serialize)]
+        #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+        struct Config {
+            jdbc_sf_url: String,
+            jdbc_sf_user: String,
+            jdbc_sf_role: String,
+            jdbc_sf_password: String,
+        }
+        Ok(serde_json::to_string_pretty(&Config {
+            jdbc_sf_url: var_source.get_environment_variable(&["JDBC_SF_URL"]).ok().unwrap_or_default(),
+            jdbc_sf_user: var_source.get_environment_variable(&["JDBC_SF_USER"]).ok().unwrap_or_default(),
+            jdbc_sf_role: var_source.get_environment_variable(&["JDBC_SF_ROLE"]).ok().unwrap_or_default(),
+            jdbc_sf_password: var_source.get_environment_variable(&["JDBC_SF_PASSWORD"]).ok().unwrap_or_default(),
+        })
+        .unwrap())
     }
 
     fn get_kafka_config<T>(&self, var_source: &T) -> Result<String, crate::Error>
     where
         T: VarSource + Send,
     {
-        Ok(format!(
-            r#"
-            KAFKA_SASL_JAAS_CONFIG: {}
-            "#,
-            var_source.get_environment_variable(&["KAFKA_SASL_JAAS_CONFIG"])?,
-        ))
+        #[derive(Debug, Serialize)]
+        #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+        struct Config {
+            kafka_sasl_jaas_config: String,
+        }
+        Ok(serde_json::to_string_pretty(&Config {
+            kafka_sasl_jaas_config: var_source
+                .get_environment_variable(&["KAFKA_SASL_JAAS_CONFIG"]).ok().unwrap_or_default(),
+        })
+        .unwrap())
     }
 }
 

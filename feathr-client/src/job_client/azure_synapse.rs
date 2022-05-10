@@ -10,9 +10,7 @@ use log::debug;
 use reqwest::Url;
 use tokio::io::AsyncReadExt;
 
-use crate::{JobClient, JobId, Logged};
-
-use super::env_utils::VarSource;
+use crate::{JobClient, JobId, Logged, VarSource};
 
 pub struct AzureSynapseClient {
     livy_client: LivyClient<AadAuthenticator>,

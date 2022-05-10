@@ -67,6 +67,12 @@ impl Default for LivyStates {
     }
 }
 
+impl std::fmt::Display for LivyStates {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", serde_json::to_string(&self).unwrap())
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum PluginCurrentState {
     Cleanup,

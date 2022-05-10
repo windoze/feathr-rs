@@ -7,7 +7,7 @@ pub struct AnchorFeatureBuilder {
     pub(crate) owner: Arc<RwLock<FeathrProjectImpl>>,
     group: String,
     name: String,
-    feature_type: Option<FeatureType>,
+    feature_type: FeatureType,
     transform: Option<Transformation>,
     keys: Vec<TypedKey>,
     feature_alias: String,
@@ -15,12 +15,12 @@ pub struct AnchorFeatureBuilder {
 }
 
 impl AnchorFeatureBuilder {
-    pub(crate) fn new(owner: Arc<RwLock<FeathrProjectImpl>>, group: &str, name: &str) -> Self {
+    pub(crate) fn new(owner: Arc<RwLock<FeathrProjectImpl>>, group: &str, name: &str, feature_type: FeatureType) -> Self {
         Self {
             owner,
             group: group.to_string(),
             name: name.to_string(),
-            feature_type: None,
+            feature_type: feature_type,
             transform: None,
             keys: Default::default(),
             feature_alias: name.to_string(),
@@ -28,17 +28,12 @@ impl AnchorFeatureBuilder {
         }
     }
 
-    pub fn set_type(&mut self, feature_type: FeatureType) -> &mut Self {
-        self.feature_type = Some(feature_type);
-        self
-    }
-
-    pub fn set_transform(&mut self, transform: Transformation) -> &mut Self {
+    pub fn transform(&mut self, transform: Transformation) -> &mut Self {
         self.transform = Some(transform);
         self
     }
 
-    pub fn set_keys(&mut self, keys: &[TypedKey]) -> &mut Self {
+    pub fn keys(&mut self, keys: &[TypedKey]) -> &mut Self {
         self.keys = keys.iter().map(|k| k.to_owned()).collect();
         self
     }
@@ -55,8 +50,6 @@ impl AnchorFeatureBuilder {
                 name: self.name.clone(),
                 feature_type: self
                     .feature_type
-                    .as_ref()
-                    .ok_or_else(|| Error::MissingFeatureType(self.name.clone()))?
                     .to_owned(),
                 transform: self
                     .transform
@@ -89,7 +82,7 @@ impl AnchorFeatureBuilder {
 pub struct DerivedFeatureBuilder {
     pub(crate) owner: Arc<RwLock<FeathrProjectImpl>>,
     name: String,
-    feature_type: Option<FeatureType>,
+    feature_type: FeatureType,
     transform: Option<Transformation>,
     keys: Vec<TypedKey>,
     feature_alias: String,
@@ -98,11 +91,11 @@ pub struct DerivedFeatureBuilder {
 }
 
 impl DerivedFeatureBuilder {
-    pub(crate) fn new(owner: Arc<RwLock<FeathrProjectImpl>>, name: &str) -> Self {
+    pub(crate) fn new(owner: Arc<RwLock<FeathrProjectImpl>>, name: &str, feature_type: FeatureType) -> Self {
         Self {
             owner,
             name: name.to_string(),
-            feature_type: None,
+            feature_type: feature_type,
             transform: None,
             keys: Default::default(),
             feature_alias: name.to_string(),
@@ -111,17 +104,12 @@ impl DerivedFeatureBuilder {
         }
     }
 
-    pub fn set_type(&mut self, feature_type: FeatureType) -> &mut Self {
-        self.feature_type = Some(feature_type);
-        self
-    }
-
-    pub fn set_transform(&mut self, transform: Transformation) -> &mut Self {
+    pub fn transform(&mut self, transform: Transformation) -> &mut Self {
         self.transform = Some(transform);
         self
     }
 
-    pub fn set_keys(&mut self, keys: &[TypedKey]) -> &mut Self {
+    pub fn keys(&mut self, keys: &[TypedKey]) -> &mut Self {
         self.keys = keys.iter().map(|k| k.to_owned()).collect();
         self
     }
@@ -159,8 +147,6 @@ impl DerivedFeatureBuilder {
                 name: self.name.clone(),
                 feature_type: self
                     .feature_type
-                    .as_ref()
-                    .ok_or_else(|| Error::MissingFeatureType(self.name.clone()))?
                     .to_owned(),
                 transform: self
                     .transform

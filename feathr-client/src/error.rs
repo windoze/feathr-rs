@@ -13,9 +13,6 @@ pub enum Error {
     #[error("Feature {0} not found")]
     FeatureNotFound(String),
 
-    #[error("Anchor {0} has no type")]
-    MissingFeatureType(String),
-
     #[error("Anchor {0} has no transformation")]
     MissingTransformation(String),
 

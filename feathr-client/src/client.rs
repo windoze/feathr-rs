@@ -1,4 +1,6 @@
-use std::path::Path;
+use std::{path::Path, time::Duration};
+
+use log::debug;
 
 use crate::{
     AzureSynapseClient, FeathrApiClient, FeathrProject, FeatureRegistry, JobClient, JobId,
@@ -31,14 +33,22 @@ impl FeathrClient {
     pub async fn submit_job(&self, request: SubmitJobRequest) -> Result<JobId, crate::Error> {
         self.job_client.submit_job(&self.var_source, request).await
     }
+
+    pub async fn wait_for_job(&self, job_id: JobId, timeout: Option<Duration>) -> Result<String, crate::Error> {
+        let status = self.job_client.wait_for_job(job_id, timeout).await?;
+        debug!("Job {} completed with status {}", job_id, status);
+        self.job_client.get_job_log(job_id).await
+    }
 }
 
+#[allow(dead_code)]
+#[allow(unused_variables)]
 #[cfg(test)]
 mod tests {
     use dotenv;
     use std::sync::Once;
+    use std::time::Duration;
 
-    use crate::utils::str_to_dur;
     use crate::*;
 
     static INIT_ENV_LOGGER: Once = Once::new();
@@ -50,13 +60,12 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(dead_code)]
     async fn it_works() {
         let client = init();
         let proj = FeathrProject::new("p1");
         let batch_source = proj.hdfs_source_builder("nycTaxiBatchSource")
-            .set_path("wasbs://public@azurefeathrstorage.blob.core.windows.net/sample_data/green_tripdata_2020-04.csv")
-            .set_time_window_parameters(
+            .path("wasbs://public@azurefeathrstorage.blob.core.windows.net/sample_data/green_tripdata_2020-04.csv")
+            .time_window(
                 "lpep_dropoff_datetime",
                 "yyyy-MM-dd HH:mm:ss"
             )
@@ -65,36 +74,31 @@ mod tests {
 
         let request_features = proj
             .group_builder("request_features")
-            // .set_source(Source::INPUT_CONTEXT())
-            .set_source(batch_source.clone())
+            .source(batch_source.clone())
             .build()
             .unwrap();
 
         let f_trip_distance = proj
-            .anchor_builder("request_features", "f_trip_distance")
-            .set_type(FeatureType::FLOAT)
-            .set_transform("trip_distance".into())
+            .anchor_builder("request_features", "f_trip_distance", FeatureType::FLOAT)
+            .transform("trip_distance".into())
             .build()
             .unwrap();
 
         let f_trip_time_duration = proj
-            .anchor_builder("request_features", "f_trip_time_duration")
-            .set_type(FeatureType::INT32)
-            .set_transform("(to_unix_timestamp(lpep_dropoff_datetime) - to_unix_timestamp(lpep_pickup_datetime))/60".into())
+            .anchor_builder("request_features", "f_trip_time_duration", FeatureType::INT32)
+            .transform("(to_unix_timestamp(lpep_dropoff_datetime) - to_unix_timestamp(lpep_pickup_datetime))/60".into())
             .build()
             .unwrap();
 
         let f_is_long_trip_distance = proj
-            .anchor_builder("request_features", "f_is_long_trip_distance")
-            .set_type(FeatureType::BOOLEAN)
-            .set_transform("cast_float(trip_distance)>30".into())
+            .anchor_builder("request_features", "f_is_long_trip_distance", FeatureType::BOOLEAN)
+            .transform("cast_float(trip_distance)>30".into())
             .build()
             .unwrap();
 
         let f_day_of_week = proj
-            .anchor_builder("request_features", "f_day_of_week")
-            .set_type(FeatureType::INT32)
-            .set_transform("dayofweek(lpep_dropoff_datetime)".into())
+            .anchor_builder("request_features", "f_day_of_week", FeatureType::INT32)
+            .transform("dayofweek(lpep_dropoff_datetime)".into())
             .build()
             .unwrap();
 
@@ -104,19 +108,18 @@ mod tests {
 
         let agg_features = proj
             .group_builder("aggregationFeatures")
-            .set_source(batch_source)
+            .source(batch_source)
             .build()
             .unwrap();
 
         let f_location_avg_fare = proj
-            .anchor_builder("aggregationFeatures", "f_location_avg_fare")
-            .set_type(FeatureType::FLOAT)
-            .set_keys(&[location_id.clone()])
-            .set_transform(
+            .anchor_builder("aggregationFeatures", "f_location_avg_fare", FeatureType::FLOAT)
+            .keys(&[location_id.clone()])
+            .transform(
                 Transformation::window_agg(
                     "cast_float(fare_amount)",
                     Aggregation::AVG,
-                    str_to_dur("90d").unwrap(),
+                    Duration::from_str("90d").unwrap(),
                 )
                 .unwrap(),
             )
@@ -124,14 +127,13 @@ mod tests {
             .unwrap();
 
         let f_location_max_fare = proj
-            .anchor_builder("aggregationFeatures", "f_location_avg_fare")
-            .set_type(FeatureType::FLOAT)
-            .set_keys(&[location_id.clone()])
-            .set_transform(
+            .anchor_builder("aggregationFeatures", "f_location_avg_fare", FeatureType::FLOAT)
+            .keys(&[location_id.clone()])
+            .transform(
                 Transformation::window_agg(
                     "cast_float(fare_amount)",
                     Aggregation::MAX,
-                    str_to_dur("90d").unwrap(),
+                    Duration::from_str("90d").unwrap(),
                 )
                 .unwrap(),
             )
@@ -156,5 +158,11 @@ mod tests {
         println!("Request: {:#?}", req);
 
         let id = client.submit_job(req).await.unwrap();
+
+        let log = client.wait_for_job(id, None).await.unwrap();
+
+        println!("Job output:\n{}", log);
+
+        println!("Job output URL: {}", client.job_client.get_job_output_url(id).await.unwrap().unwrap());
     }
 }
