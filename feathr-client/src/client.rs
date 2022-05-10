@@ -80,34 +80,34 @@ mod tests {
             .unwrap();
 
         let request_features = proj
-            .anchor_group("request_features", batch_source.clone())
+            .anchor_group("request_features", proj.INPUT_CONTEXT())
             .build()
             .unwrap();
 
         let f_trip_distance = request_features
             .anchor("f_trip_distance", FeatureType::FLOAT)
             .unwrap()
-            .transform("trip_distance".into())
+            .transform("trip_distance")
             .build()
             .unwrap();
 
         let f_trip_time_duration = request_features
             .anchor("f_trip_time_duration", FeatureType::INT32).unwrap()
-            .transform("(to_unix_timestamp(lpep_dropoff_datetime) - to_unix_timestamp(lpep_pickup_datetime))/60".into())
+            .transform("(to_unix_timestamp(lpep_dropoff_datetime) - to_unix_timestamp(lpep_pickup_datetime))/60")
             .build()
             .unwrap();
 
         let f_is_long_trip_distance = request_features
             .anchor("f_is_long_trip_distance", FeatureType::BOOLEAN)
             .unwrap()
-            .transform("cast_float(trip_distance)>30".into())
+            .transform("cast_float(trip_distance)>30")
             .build()
             .unwrap();
 
         let f_day_of_week = request_features
             .anchor("f_day_of_week", FeatureType::INT32)
             .unwrap()
-            .transform("dayofweek(lpep_dropoff_datetime)".into())
+            .transform("dayofweek(lpep_dropoff_datetime)")
             .build()
             .unwrap();
 
@@ -150,20 +150,41 @@ mod tests {
             .build()
             .unwrap();
 
+        let f_trip_time_distance = proj
+            .derived("f_trip_time_distance", FeatureType::FLOAT)
+            .add_input(f_trip_distance.clone())
+            .add_input(f_trip_time_duration.clone())
+            .transform("f_trip_distance * f_trip_time_duration")
+            .build()
+            .unwrap();
+
+        let f_trip_time_rounded = proj
+            .derived("f_trip_time_rounded", FeatureType::INT32)
+            .add_input(f_trip_time_duration.clone())
+            .transform("f_trip_time_duration % 10")
+            .build()
+            .unwrap();
+
         println!("features.conf:\n{}", proj.get_feature_config().unwrap());
 
         let output = "abfss://xchfeathrtest4fs@xchfeathrtest4sto.dfs.core.windows.net/output.bin";
-        let q = FeatureQuery::new(&["f_location_avg_fare"], &[&location_id]);
+        let q = FeatureQuery::new(
+            &[
+                "f_location_avg_fare",
+                "f_trip_time_distance",
+            ],
+            &[&location_id],
+        );
         let ob = ObservationSettings::new("wasbs://public@azurefeathrstorage.blob.core.windows.net/sample_data/green_tripdata_2020-04.csv", "lpep_dropoff_datetime", "yyyy-MM-dd HH:mm:ss");
 
         println!(
             "features_join.conf:\n{}",
-            proj.get_feature_join_config(ob, vec![q.clone()], output)
+            proj.get_feature_join_config(ob.clone(), vec![q.clone()], output)
                 .unwrap()
         );
 
         let req = proj
-            .feature_join_job(ObservationSettings::new("wasbs://public@azurefeathrstorage.blob.core.windows.net/sample_data/green_tripdata_2020-04.csv", "lpep_dropoff_datetime", "yyyy-MM-dd HH:mm:ss"), vec![q], output)
+            .feature_join_job(ob, vec![q], output)
             .unwrap()
             .output_path(output)
             .build();

@@ -7,7 +7,7 @@ use serde::{ser::SerializeStruct, Deserialize, Serialize};
 
 use crate::{
     project::{FeathrProjectImpl, FeathrProjectModifier},
-    Error, FeatureType, Transformation, TypedKey,
+    Error, FeatureType, Transformation, TypedKey, DerivedTransformation,
 };
 
 pub trait Feature
@@ -22,6 +22,7 @@ where
     fn get_registry_tags(&self) -> HashMap<String, String>;
 }
 
+#[derive(Clone, Debug)]
 pub struct AnchorFeature {
     pub(crate) owner: Arc<RwLock<FeathrProjectImpl>>,
     pub(crate) inner: Arc<AnchorFeatureImpl>,
@@ -53,11 +54,11 @@ impl Feature for AnchorFeature {
     }
 
     fn get_transformation(&self) -> Transformation {
-        self.inner.base.transform.clone()
+        self.inner.transform.clone()
     }
 
     fn get_key_alias(&self) -> Vec<String> {
-        self.inner.base.key_alias.clone()
+        self.inner.key_alias.clone()
     }
 
     fn get_registry_tags(&self) -> HashMap<String, String> {
@@ -71,6 +72,7 @@ impl ToString for AnchorFeature {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct DerivedFeature {
     pub(crate) owner: Arc<RwLock<FeathrProjectImpl>>,
     pub(crate) inner: Arc<DerivedFeatureImpl>,
@@ -101,11 +103,11 @@ impl Feature for DerivedFeature {
     }
 
     fn get_transformation(&self) -> Transformation {
-        self.inner.base.transform.clone()
+        self.inner.transform.clone().into()
     }
 
     fn get_key_alias(&self) -> Vec<String> {
-        self.inner.base.key_alias.clone()
+        self.inner.key_alias.clone()
     }
 
     fn get_registry_tags(&self) -> HashMap<String, String> {
@@ -125,14 +127,10 @@ pub(crate) struct FeatureBase {
     pub(crate) name: String,
     #[serde(rename = "type", default)]
     pub(crate) feature_type: FeatureType,
-    #[serde(flatten)]
-    pub(crate) transform: Transformation,
     #[serde(skip)]
     pub(crate) key: Vec<TypedKey>,
     #[serde(skip)]
     pub(crate) feature_alias: String,
-    #[serde(skip)]
-    pub(crate) key_alias: Vec<String>,
     #[serde(skip)]
     pub(crate) registry_tags: HashMap<String, String>,
 }
@@ -141,6 +139,10 @@ pub(crate) struct FeatureBase {
 pub(crate) struct AnchorFeatureImpl {
     #[serde(flatten)]
     pub(crate) base: FeatureBase,
+    #[serde(skip)]
+    pub(crate) key_alias: Vec<String>,
+    #[serde(flatten)]
+    pub(crate) transform: Transformation,
 }
 
 impl AnchorFeatureImpl {
@@ -184,11 +186,11 @@ impl Feature for AnchorFeatureImpl {
     }
 
     fn get_transformation(&self) -> Transformation {
-        self.base.transform.to_owned()
+        self.transform.to_owned()
     }
 
     fn get_key_alias(&self) -> Vec<String> {
-        self.base.key_alias.to_owned()
+        self.key_alias.to_owned()
     }
 
     fn get_registry_tags(&self) -> HashMap<String, String> {
@@ -199,7 +201,7 @@ impl Feature for AnchorFeatureImpl {
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
 pub(crate) struct InputFeature {
     pub(crate) key: Vec<TypedKey>,
-    pub(crate) name: String,
+    pub(crate) feature: String,
 }
 
 impl Serialize for InputFeature {
@@ -216,7 +218,7 @@ impl Serialize for InputFeature {
                 .map(|k| k.key_column_alias.clone().unwrap_or(k.key_column.clone()))
                 .collect::<Vec<String>>(),
         )?;
-        state.serialize_field("name", &self.name)?;
+        state.serialize_field("feature", &self.feature)?;
         state.end()
     }
 }
@@ -225,7 +227,11 @@ impl Serialize for InputFeature {
 pub(crate) struct DerivedFeatureImpl {
     #[serde(flatten)]
     pub(crate) base: FeatureBase,
-    pub(crate) inputs: Vec<InputFeature>,
+    #[serde(rename = "key")]
+    pub(crate) key_alias: Vec<String>,
+    #[serde(flatten)]
+    pub(crate) transform: DerivedTransformation,
+    pub(crate) inputs: HashMap<String, InputFeature>,
 }
 
 impl DerivedFeatureImpl {
@@ -247,7 +253,7 @@ impl DerivedFeatureImpl {
             }
         }
         let mut ret = self.clone();
-        ret.base.key_alias = key_alias.into_iter().map(|&s| s.to_owned()).collect();
+        ret.key_alias = key_alias.into_iter().map(|&s| s.to_owned()).collect();
         Ok(ret)
     }
 
@@ -272,11 +278,11 @@ impl Feature for DerivedFeatureImpl {
     }
 
     fn get_transformation(&self) -> Transformation {
-        self.base.transform.to_owned()
+        self.transform.to_owned().into()
     }
 
     fn get_key_alias(&self) -> Vec<String> {
-        self.base.key_alias.to_owned()
+        self.key_alias.to_owned()
     }
 
     fn get_registry_tags(&self) -> HashMap<String, String> {

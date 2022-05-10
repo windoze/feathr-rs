@@ -32,7 +32,7 @@ pub enum Error {
     SourceNoQuery(String),
 
     #[error("For anchors of non-INPUT_CONTEXT source, key of feature {0} should be explicitly specified and not left blank")]
-    DummyKeyUsedWithInputContext(String),
+    DummyKeyUsedWithoutInputContext(String),
 
     #[error("Anchor feature {0} has different key alias than other features in the anchor group {1}")]
     InvalidKeyAlias(String, String),

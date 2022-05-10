@@ -263,10 +263,10 @@ struct AnchorGroupImpl {
 
 impl AnchorGroupImpl {
     fn insert(&mut self, f: AnchorFeatureImpl) -> Result<Arc<AnchorFeatureImpl>, Error> {
-        if self.source == Source::INPUT_CONTEXT()
+        if self.source != Source::INPUT_CONTEXT()
             && (f.get_key().is_empty() || f.get_key() == vec![TypedKey::DUMMY_KEY()])
         {
-            return Err(Error::DummyKeyUsedWithInputContext(f.get_name()));
+            return Err(Error::DummyKeyUsedWithoutInputContext(f.get_name()));
         }
 
         if !self.anchors.is_empty() && (f.get_key_alias() != self.get_key_alias()) {
@@ -441,13 +441,13 @@ mod tests {
         let f = g1
             .anchor("f1", FeatureType::INT32)
             .unwrap()
-            .transform("x".into())
+            .transform("x")
             .keys(&[k1, k2])
             .build()
             .unwrap();
         proj.derived("d1", FeatureType::INT32)
             .add_input(f)
-            .transform("1".into())
+            .transform("1")
             .build()
             .unwrap();
         let s = proj.get_feature_config().unwrap();

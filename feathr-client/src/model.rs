@@ -274,7 +274,11 @@ pub enum Transformation {
 }
 
 impl Transformation {
-    pub fn window_agg(def_expr: &str, agg_func: Aggregation, window: Duration) -> Result<Self, crate::Error> {
+    pub fn window_agg(
+        def_expr: &str,
+        agg_func: Aggregation,
+        window: Duration,
+    ) -> Result<Self, crate::Error> {
         Ok(Self::WindowAgg {
             def_expr: def_expr.to_string(),
             agg_func: Some(agg_func),
@@ -295,6 +299,91 @@ where
             def: ExpressionDef {
                 sql_expr: String::from(s.as_ref()),
             },
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum DerivedTransformation {
+    Expression {
+        definition: String,
+    },
+    WindowAgg {
+        #[serde(rename = "def")]
+        def_expr: String,
+        #[serde(rename = "aggregation")]
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        agg_func: Option<Aggregation>,
+        #[serde(
+            skip_serializing_if = "Option::is_none",
+            serialize_with = "ser_opt_dur",
+            deserialize_with = "des_opt_dur",
+            default
+        )]
+        window: Option<Duration>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        group_by: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        filter: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        limit: Option<u64>,
+    },
+    Udf {
+        name: String,
+    },
+}
+
+impl From<Transformation> for DerivedTransformation {
+    fn from(t: Transformation) -> Self {
+        match t {
+            Transformation::Expression { def } => DerivedTransformation::Expression {
+                definition: def.sql_expr,
+            },
+            Transformation::WindowAgg {
+                def_expr,
+                agg_func,
+                window,
+                group_by,
+                filter,
+                limit,
+            } => DerivedTransformation::WindowAgg {
+                def_expr,
+                agg_func,
+                window,
+                group_by,
+                filter,
+                limit,
+            },
+            Transformation::Udf { name } => DerivedTransformation::Udf { name },
+        }
+    }
+}
+
+impl From<DerivedTransformation> for Transformation {
+    fn from(t: DerivedTransformation) -> Self {
+        match t {
+            DerivedTransformation::Expression { definition } => Transformation::Expression {
+                def: ExpressionDef {
+                    sql_expr: definition,
+                },
+            },
+            DerivedTransformation::WindowAgg {
+                def_expr,
+                agg_func,
+                window,
+                group_by,
+                filter,
+                limit,
+            } => Transformation::WindowAgg {
+                def_expr,
+                agg_func,
+                window,
+                group_by,
+                filter,
+                limit,
+            },
+            DerivedTransformation::Udf { name } => Transformation::Udf { name },
         }
     }
 }
