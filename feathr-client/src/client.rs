@@ -81,34 +81,33 @@ mod tests {
             .unwrap();
 
         let request_features = proj
-            .group_builder("request_features", batch_source.clone())
+            .anchor_group("request_features", batch_source.clone())
             .build()
             .unwrap();
 
-        let f_trip_distance = proj
-            .anchor_builder("request_features", "f_trip_distance", FeatureType::FLOAT)
+        let f_trip_distance = request_features
+            .anchor("f_trip_distance", FeatureType::FLOAT)
+            .unwrap()
             .transform("trip_distance".into())
             .build()
             .unwrap();
 
-        let f_trip_time_duration = proj
-            .anchor_builder("request_features", "f_trip_time_duration", FeatureType::INT32)
+        let f_trip_time_duration = request_features
+            .anchor("f_trip_time_duration", FeatureType::INT32).unwrap()
             .transform("(to_unix_timestamp(lpep_dropoff_datetime) - to_unix_timestamp(lpep_pickup_datetime))/60".into())
             .build()
             .unwrap();
 
-        let f_is_long_trip_distance = proj
-            .anchor_builder(
-                "request_features",
-                "f_is_long_trip_distance",
-                FeatureType::BOOLEAN,
-            )
+        let f_is_long_trip_distance = request_features
+            .anchor("f_is_long_trip_distance", FeatureType::BOOLEAN)
+            .unwrap()
             .transform("cast_float(trip_distance)>30".into())
             .build()
             .unwrap();
 
-        let f_day_of_week = proj
-            .anchor_builder("request_features", "f_day_of_week", FeatureType::INT32)
+        let f_day_of_week = request_features
+            .anchor("f_day_of_week", FeatureType::INT32)
+            .unwrap()
             .transform("dayofweek(lpep_dropoff_datetime)".into())
             .build()
             .unwrap();
@@ -118,16 +117,13 @@ mod tests {
             .description("location id in NYC");
 
         let agg_features = proj
-            .group_builder("aggregationFeatures", batch_source)
+            .anchor_group("aggregationFeatures", batch_source)
             .build()
             .unwrap();
 
-        let f_location_avg_fare = proj
-            .anchor_builder(
-                "aggregationFeatures",
-                "f_location_avg_fare",
-                FeatureType::FLOAT,
-            )
+        let f_location_avg_fare = agg_features
+            .anchor("f_location_avg_fare", FeatureType::FLOAT)
+            .unwrap()
             .keys(&[location_id.clone()])
             .transform(
                 Transformation::window_agg(
@@ -140,12 +136,9 @@ mod tests {
             .build()
             .unwrap();
 
-        let f_location_max_fare = proj
-            .anchor_builder(
-                "aggregationFeatures",
-                "f_location_avg_fare",
-                FeatureType::FLOAT,
-            )
+        let f_location_max_fare = agg_features
+            .anchor("f_location_avg_fare", FeatureType::FLOAT)
+            .unwrap()
             .keys(&[location_id.clone()])
             .transform(
                 Transformation::window_agg(

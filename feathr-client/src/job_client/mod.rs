@@ -36,9 +36,14 @@ pub struct SubmitJobRequest {
     pub python_files: Vec<String>,
     pub reference_files: Vec<String>,
     pub job_tags: HashMap<String, String>,
+    // TODO:
+    pub secret_key: Vec<String>,
     pub configuration: HashMap<String, String>,
 }
 
+/**
+ * Spark Job Id
+ */
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct JobId(pub u64);
 
@@ -48,6 +53,9 @@ impl std::fmt::Display for JobId {
     }
 }
 
+/**
+ * Spark client trait
+ */
 #[async_trait]
 pub trait JobClient
 where
@@ -344,6 +352,9 @@ where
     }
 }
 
+/**
+ * Builder to build a Spark Job submitting request
+ */
 pub struct SubmitJobRequestBuilder {
     job_name: String,
     input_path: String,
@@ -357,6 +368,7 @@ pub struct SubmitJobRequestBuilder {
     feature_config: String,
     feature_join_config: String,
     feature_gen_config: String,
+    secret_keys: Vec<String>,
 }
 
 impl SubmitJobRequestBuilder {
@@ -365,6 +377,7 @@ impl SubmitJobRequestBuilder {
         input_path: String,
         feature_config: String,
         job_config: String, // feature_join_config or feature_gen_config
+        secret_keys: Vec<String>,
     ) -> Self {
         Self {
             job_name,
@@ -379,6 +392,7 @@ impl SubmitJobRequestBuilder {
             feature_config,
             feature_join_config: job_config,
             feature_gen_config: Default::default(),
+            secret_keys: secret_keys,
         }
     }
 
@@ -387,6 +401,7 @@ impl SubmitJobRequestBuilder {
         input_path: String,
         feature_config: String,
         job_config: String, // feature_join_config or feature_gen_config
+        secret_keys: Vec<String>,
     ) -> Self {
         Self {
             job_name,
@@ -401,6 +416,7 @@ impl SubmitJobRequestBuilder {
             feature_config,
             feature_join_config: Default::default(),
             feature_gen_config: job_config,
+            secret_keys: secret_keys,
         }
     }
 
@@ -437,6 +453,7 @@ impl SubmitJobRequestBuilder {
             reference_files: self.reference_files.to_owned(),
             job_tags,
             configuration: self.configuration.to_owned(),
+            secret_key: self.secret_keys.to_owned(),
         }
     }
 }

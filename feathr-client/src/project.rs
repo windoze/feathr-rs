@@ -8,10 +8,13 @@ use serde::Serialize;
 use crate::feature::{AnchorFeature, AnchorFeatureImpl, DerivedFeature, DerivedFeatureImpl};
 use crate::feature_builder::{AnchorFeatureBuilder, DerivedFeatureBuilder};
 use crate::{
-    Error, Feature, FeatureQuery, HdfsSourceBuilder, JdbcSourceBuilder, ObservationSettings,
-    Source, SourceImpl, SubmitJobRequestBuilder, TypedKey, FeatureType,
+    Error, Feature, FeatureQuery, FeatureType, HdfsSourceBuilder, JdbcSourceBuilder,
+    ObservationSettings, Source, SourceImpl, SubmitJobRequestBuilder, TypedKey,
 };
 
+/**
+ * A Feathr Project is the container of all anchor features, anchor groups, derived features, and data sources.
+ */
 #[derive(Debug)]
 pub struct FeathrProject {
     input_context: Source,
@@ -19,6 +22,9 @@ pub struct FeathrProject {
 }
 
 impl FeathrProject {
+    /**
+     * Create a new Feathr project with name
+     */
     pub fn new(name: &str) -> Self {
         let inner = Arc::new(RwLock::new(FeathrProjectImpl {
             name: name.to_string(),
@@ -34,6 +40,9 @@ impl FeathrProject {
         }
     }
 
+    /**
+     * Retrieve anchor feature with `name` from specified group
+     */
     pub fn get_anchor(&self, group: &str, name: &str) -> Result<AnchorFeature, Error> {
         let r = self.inner.read()?;
         Ok(AnchorFeature {
@@ -42,6 +51,9 @@ impl FeathrProject {
         })
     }
 
+    /**
+     * Retrieve derived feature with `name`
+     */
     pub fn get_derived(&self, name: &str) -> Result<DerivedFeature, Error> {
         let r = self.inner.read()?;
         Ok(DerivedFeature {
@@ -50,41 +62,62 @@ impl FeathrProject {
         })
     }
 
-    pub fn group_builder(&self, name: &str, source: Source) -> AnchorGroupBuilder {
+    /**
+     * Retrieve anchor group with `name`
+     */
+    pub fn get_anchor_group(&self, name: &str) -> Result<AnchorGroup, Error> {
+        let g = self
+            .inner
+            .read()?
+            .anchor_groups
+            .get(name)
+            .ok_or_else(|| Error::AnchorGroupNotFound(name.to_string()))?
+            .clone();
+        Ok(AnchorGroup {
+            owner: self.inner.clone(),
+            inner: g,
+        })
+    }
+
+    /**
+     * Start creating an anchor group, with given name and data source
+     */
+    pub fn anchor_group(&self, name: &str, source: Source) -> AnchorGroupBuilder {
         AnchorGroupBuilder::new(self.inner.clone(), name, source)
     }
 
-    pub fn anchor_builder(&self, group: &str, name: &str, feature_type: FeatureType) -> AnchorFeatureBuilder {
-        AnchorFeatureBuilder::new(self.inner.clone(), group, name, feature_type)
-    }
-
-    pub fn derived_builder(&self, name: &str, feature_type: FeatureType) -> DerivedFeatureBuilder {
+    /**
+     * Start creating a derived feature with given name and feature type
+     */
+    pub fn derived(&self, name: &str, feature_type: FeatureType) -> DerivedFeatureBuilder {
         DerivedFeatureBuilder::new(self.inner.clone(), name, feature_type)
     }
 
+    /**
+     * Start creating a HDFS data source with given name
+     */
     pub fn hdfs_source_builder(&self, name: &str) -> HdfsSourceBuilder {
         HdfsSourceBuilder::new(self.inner.clone(), name)
     }
 
+    /**
+     * Start creating a JDBC data source with given name
+     */
     pub fn jdbc_source_builder(&self, name: &str) -> JdbcSourceBuilder {
         JdbcSourceBuilder::new(self.inner.clone(), name)
     }
 
+    /**
+     * Returns the placeholder data source
+     */
     #[allow(non_snake_case)]
     pub fn INPUT_CONTEXT(&self) -> Source {
         self.input_context.clone()
     }
 
-    pub fn get_secret_keys(&self) -> Result<Vec<String>, Error> {
-        Ok(self.inner.read()?.get_secret_keys())
-    }
-
-    pub fn get_feature_config(&self) -> Result<String, Error> {
-        let r = self.inner.read()?;
-        let s = serde_json::to_string_pretty(&*r).unwrap();
-        Ok(s)
-    }
-
+    /**
+     * Creates the Spark job request for a feature-joining job
+     */
     pub fn feature_join_job(
         &self,
         observation_settings: ObservationSettings,
@@ -96,16 +129,34 @@ impl FeathrProject {
             observation_settings.observation_path.to_string(),
             self.get_feature_config()?,
             self.get_feature_join_config(observation_settings, feature_query, output)?,
+            self.get_secret_keys()?,
         ))
     }
 
+    /**
+     * Creates the Spark job request for a feature-generation job
+     */
     pub fn feature_gen_job(&self) -> Result<SubmitJobRequestBuilder, Error> {
         Ok(SubmitJobRequestBuilder::new_gen(
-            format!("{}_feathr_feature_materialization_job", self.inner.read()?.name),
-            Default::default(),     // TODO:
+            format!(
+                "{}_feathr_feature_materialization_job",
+                self.inner.read()?.name
+            ),
+            Default::default(), // TODO:
             self.get_feature_config()?,
             self.get_feature_gen_config()?,
+            self.get_secret_keys()?,
         ))
+    }
+
+    pub(crate) fn get_secret_keys(&self) -> Result<Vec<String>, Error> {
+        Ok(self.inner.read()?.get_secret_keys())
+    }
+
+    pub(crate) fn get_feature_config(&self) -> Result<String, Error> {
+        let r = self.inner.read()?;
+        let s = serde_json::to_string_pretty(&*r).unwrap();
+        Ok(s)
     }
 
     pub(crate) fn get_feature_join_config(
@@ -142,7 +193,7 @@ pub(crate) struct FeathrProjectImpl {
     #[serde(skip_serializing)]
     name: String,
     #[serde(rename = "anchors")]
-    anchor_groups: HashMap<String, AnchorGroup>,
+    anchor_groups: HashMap<String, Arc<RwLock<AnchorGroupImpl>>>,
     derivations: HashMap<String, Arc<DerivedFeatureImpl>>,
     sources: HashMap<String, Arc<SourceImpl>>,
 }
@@ -153,7 +204,7 @@ impl FeathrProjectImpl {
             .anchor_groups
             .get(group)
             .ok_or_else(|| Error::AnchorGroupNotFound(group.to_string()))?;
-        g.get(name)
+        g.read()?.get(name)
     }
 
     fn get_derived(&self, name: &str) -> Result<Arc<DerivedFeatureImpl>, Error> {
@@ -172,6 +223,7 @@ impl FeathrProjectImpl {
             .anchor_groups
             .get_mut(group)
             .ok_or_else(|| Error::AnchorGroupNotFound(group.to_string()))?
+            .write()?
             .insert(f)?)
     }
 
@@ -199,14 +251,14 @@ impl FeathrProjectImpl {
 }
 
 #[derive(Debug)]
-struct AnchorGroup {
+struct AnchorGroupImpl {
     name: String,
     anchors: IndexMap<String, Arc<AnchorFeatureImpl>>,
     source: Source,
     registry_tags: HashMap<String, String>,
 }
 
-impl AnchorGroup {
+impl AnchorGroupImpl {
     fn insert(&mut self, f: AnchorFeatureImpl) -> Result<Arc<AnchorFeatureImpl>, Error> {
         if self.source == Source::INPUT_CONTEXT()
             && (f.get_key().is_empty() || f.get_key() == vec![TypedKey::DUMMY_KEY()])
@@ -240,7 +292,7 @@ impl AnchorGroup {
     }
 }
 
-impl Serialize for AnchorGroup {
+impl Serialize for AnchorGroupImpl {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -258,6 +310,34 @@ impl Serialize for AnchorGroup {
         state.serialize_field("key", &key)?;
         state.serialize_field("features", &self.anchors.clone())?;
         state.end()
+    }
+}
+
+pub struct AnchorGroup {
+    owner: Arc<RwLock<FeathrProjectImpl>>,
+    inner: Arc<RwLock<AnchorGroupImpl>>,
+}
+
+impl AnchorGroup {
+    pub fn anchor(
+        &self,
+        name: &str,
+        feature_type: FeatureType,
+    ) -> Result<AnchorFeatureBuilder, Error> {
+        Ok(AnchorFeatureBuilder::new(
+            self.owner.clone(),
+            &self.inner.read()?.name,
+            name,
+            feature_type,
+        ))
+    }
+
+    pub fn get_anchor(&self, name: &str) -> Result<AnchorFeature, Error> {
+        let r = self.inner.read()?;
+        Ok(AnchorFeature {
+            owner: self.owner.clone(),
+            inner: r.get(name)?,
+        })
     }
 }
 
@@ -284,20 +364,22 @@ impl AnchorGroupBuilder {
         self
     }
 
-    pub fn build(&mut self) -> Result<String, Error> {
-        let group = AnchorGroup {
+    pub fn build(&mut self) -> Result<AnchorGroup, Error> {
+        let group = AnchorGroupImpl {
             name: self.name.clone(),
             anchors: Default::default(),
-            source: self
-                .source
-                .clone(),
+            source: self.source.clone(),
             registry_tags: self.registry_tags.clone(),
         };
 
         let name = group.name.clone();
         let mut w = self.owner.write()?;
-        w.anchor_groups.entry(name.clone()).or_insert(group);
-        Ok(name)
+        let g = Arc::new(RwLock::new(group));
+        w.anchor_groups.entry(name.clone()).or_insert(g.clone());
+        Ok(AnchorGroup {
+            owner: self.owner.clone(),
+            inner: g,
+        })
     }
 }
 
@@ -344,23 +426,24 @@ mod tests {
     #[test]
     fn it_works() {
         let proj = FeathrProject::new("p1");
-        let s = proj.jdbc_source_builder("h1")
+        let s = proj
+            .jdbc_source_builder("h1")
             .set_auth(JdbcSourceAuth::Userpass)
             .set_url("jdbc:sqlserver://bet-test.database.windows.net:1433;database=bet-test")
             .set_dbtable("AzureRegions")
             .build()
             .unwrap();
-        let g1 = proj.group_builder("g1", s).build().unwrap();
+        let g1 = proj.anchor_group("g1", s).build().unwrap();
         let k1 = TypedKey::new("c1", ValueType::INT32);
         let k2 = TypedKey::new("c2", ValueType::INT32);
-        let f = proj
-            .anchor_builder(&g1, "f1", FeatureType::INT32)
+        let f = g1
+            .anchor("f1", FeatureType::INT32)
+            .unwrap()
             .transform("x".into())
             .keys(&[k1, k2])
             .build()
             .unwrap();
-        proj
-            .derived_builder("d1", FeatureType::INT32)
+        proj.derived("d1", FeatureType::INT32)
             .add_input(f)
             .transform("1".into())
             .build()
