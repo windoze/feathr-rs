@@ -72,6 +72,12 @@ impl ToString for AnchorFeature {
     }
 }
 
+impl ToString for &AnchorFeature {
+    fn to_string(&self) -> String {
+        self.get_name()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct DerivedFeature {
     pub(crate) owner: Arc<RwLock<FeathrProjectImpl>>,
@@ -116,6 +122,12 @@ impl Feature for DerivedFeature {
 }
 
 impl ToString for DerivedFeature {
+    fn to_string(&self) -> String {
+        self.get_name()
+    }
+}
+
+impl ToString for &DerivedFeature {
     fn to_string(&self) -> String {
         self.get_name()
     }

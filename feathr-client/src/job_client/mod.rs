@@ -3,7 +3,8 @@ mod databricks;
 
 use std::{
     collections::HashMap,
-    time::{Duration, SystemTime}, sync::Arc,
+    sync::Arc,
+    time::{Duration, SystemTime},
 };
 
 use async_trait::async_trait;
@@ -53,6 +54,35 @@ impl std::fmt::Display for JobId {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JobStatus {
+    Starting,
+    Running,
+    Success,
+    Failed,
+}
+
+impl JobStatus {
+    pub fn is_ended(self) -> bool {
+        matches!(self, JobStatus::Success | JobStatus::Failed)
+    }
+}
+
+impl std::fmt::Display for JobStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match &self {
+                JobStatus::Starting => "Starting",
+                JobStatus::Running => "Running",
+                JobStatus::Success => "Success",
+                JobStatus::Failed => "Failed",
+            }
+        )
+    }
+}
+
 /**
  * Spark client trait
  */
@@ -62,14 +92,11 @@ where
     Self: Sized,
 {
     /**
-     * The job status
-     */
-    type JobStatus: Clone + Send + Sync + std::fmt::Display;
-
-    /**
      * Create instance from a variable source
      */
-    async fn from_var_source(var_source: Arc<dyn VarSource + Send + Sync>) -> Result<Self, crate::Error>;
+    async fn from_var_source(
+        var_source: Arc<dyn VarSource + Send + Sync>,
+    ) -> Result<Self, crate::Error>;
 
     /**
      * Create file on the remote side and returns Spark compatible URL of the file
@@ -91,19 +118,9 @@ where
     ) -> Result<JobId, crate::Error>;
 
     /**
-     * Check if the status indicates the job has ended
-     */
-    fn is_ended_status(&self, status: Self::JobStatus) -> bool;
-
-    /**
-     * Check if the status indicates the job has ended
-     */
-    fn is_successful_status(&self, status: Self::JobStatus) -> bool;
-
-    /**
      * Get job status
      */
-    async fn get_job_status(&self, job_id: JobId) -> Result<Self::JobStatus, crate::Error>;
+    async fn get_job_status(&self, job_id: JobId) -> Result<JobStatus, crate::Error>;
 
     /**
      * Get job driver log
@@ -143,12 +160,12 @@ where
         &self,
         job_id: JobId,
         timeout: Option<Duration>,
-    ) -> Result<Self::JobStatus, crate::Error> {
+    ) -> Result<JobStatus, crate::Error> {
         let wait_until = timeout.map(|d| SystemTime::now() + d);
         loop {
             let status = self.get_job_status(job_id.clone()).await?;
-            if self.is_ended_status(status.clone()) {
-                return Ok(status.clone());
+            if status.is_ended() {
+                return Ok(status);
             } else {
                 if let Some(t) = wait_until {
                     if SystemTime::now() > t {
@@ -179,9 +196,10 @@ where
      */
     fn get_file_name(&self, path_or_url: &str) -> Result<String, crate::Error> {
         Ok(
-            if !path_or_url.contains("://") || path_or_url.starts_with("dbfs:") {
-                // It's a local path
-                let path = std::path::Path::new(path_or_url);
+            if !path_or_url.contains("://") {
+                // It's a local path or `dbfs:/path/and/filename`
+                let path =
+                    std::path::Path::new(path_or_url.trim_start_matches("dbfs:"));
                 path.file_name()
                     .to_owned()
                     .ok_or_else(|| crate::Error::InvalidUrl(path_or_url.to_string()))?
@@ -206,8 +224,7 @@ where
         &self,
         var_source: Arc<dyn VarSource + Send + Sync>,
         request: &SubmitJobRequest,
-    ) -> Result<Vec<String>, crate::Error>
-    {
+    ) -> Result<Vec<String>, crate::Error> {
         let mut ret: Vec<String> = vec![
             "--num-parts".to_string(),
             self.get_output_num_parts(var_source.clone()).await?,
@@ -255,13 +272,19 @@ where
         Ok(ret)
     }
 
-    async fn get_output_num_parts(&self, var_source: Arc<dyn VarSource + Send + Sync>) -> Result<String, crate::Error>
-    {
-        Ok(var_source.get_environment_variable(&["spark_config", "spark_result_output_parts"]).await?)
+    async fn get_output_num_parts(
+        &self,
+        var_source: Arc<dyn VarSource + Send + Sync>,
+    ) -> Result<String, crate::Error> {
+        Ok(var_source
+            .get_environment_variable(&["spark_config", "spark_result_output_parts"])
+            .await?)
     }
 
-    async fn get_s3_config(&self, var_source: Arc<dyn VarSource + Send + Sync>) -> Result<String, crate::Error>
-    {
+    async fn get_s3_config(
+        &self,
+        var_source: Arc<dyn VarSource + Send + Sync>,
+    ) -> Result<String, crate::Error> {
         #[derive(Debug, Serialize)]
         #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
         struct Config {
@@ -270,19 +293,27 @@ where
             s3_secret_key: String,
         }
         Ok(serde_json::to_string_pretty(&Config {
-            s3_endpoint: var_source.get_environment_variable(&[
-                "offline_store",
-                "s3",
-                "s3_endpoint",
-            ]).await?,
-            s3_access_key: var_source.get_environment_variable(&["S3_ACCESS_KEY"]).await.ok().unwrap_or_default(),
-            s3_secret_key: var_source.get_environment_variable(&["S3_SECRET_KEY"]).await.ok().unwrap_or_default(),
+            s3_endpoint: var_source
+                .get_environment_variable(&["offline_store", "s3", "s3_endpoint"])
+                .await?,
+            s3_access_key: var_source
+                .get_environment_variable(&["S3_ACCESS_KEY"])
+                .await
+                .ok()
+                .unwrap_or_default(),
+            s3_secret_key: var_source
+                .get_environment_variable(&["S3_SECRET_KEY"])
+                .await
+                .ok()
+                .unwrap_or_default(),
         })
         .unwrap())
     }
 
-    async fn get_adls_config(&self, var_source: Arc<dyn VarSource + Send + Sync>) -> Result<String, crate::Error>
-    {
+    async fn get_adls_config(
+        &self,
+        var_source: Arc<dyn VarSource + Send + Sync>,
+    ) -> Result<String, crate::Error> {
         #[derive(Debug, Serialize)]
         #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
         struct Config {
@@ -290,14 +321,24 @@ where
             adls_key: String,
         }
         Ok(serde_json::to_string_pretty(&Config {
-            adls_account: var_source.get_environment_variable(&["ADLS_ACCOUNT"]).await.ok().unwrap_or_default(),
-            adls_key: var_source.get_environment_variable(&["ADLS_KEY"]).await.ok().unwrap_or_default(),
+            adls_account: var_source
+                .get_environment_variable(&["ADLS_ACCOUNT"])
+                .await
+                .ok()
+                .unwrap_or_default(),
+            adls_key: var_source
+                .get_environment_variable(&["ADLS_KEY"])
+                .await
+                .ok()
+                .unwrap_or_default(),
         })
         .unwrap())
     }
 
-    async fn get_blob_config(&self, var_source: Arc<dyn VarSource + Send + Sync>) -> Result<String, crate::Error>
-    {
+    async fn get_blob_config(
+        &self,
+        var_source: Arc<dyn VarSource + Send + Sync>,
+    ) -> Result<String, crate::Error> {
         #[derive(Debug, Serialize)]
         #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
         struct Config {
@@ -305,14 +346,24 @@ where
             blob_key: String,
         }
         Ok(serde_json::to_string_pretty(&Config {
-            blob_account: var_source.get_environment_variable(&["BLOB_ACCOUNT"]).await.ok().unwrap_or_default(),
-            blob_key: var_source.get_environment_variable(&["BLOB_KEY"]).await.ok().unwrap_or_default(),
+            blob_account: var_source
+                .get_environment_variable(&["BLOB_ACCOUNT"])
+                .await
+                .ok()
+                .unwrap_or_default(),
+            blob_key: var_source
+                .get_environment_variable(&["BLOB_KEY"])
+                .await
+                .ok()
+                .unwrap_or_default(),
         })
         .unwrap())
     }
 
-    async fn get_sql_config(&self, var_source: Arc<dyn VarSource + Send + Sync>) -> Result<String, crate::Error>
-    {
+    async fn get_sql_config(
+        &self,
+        var_source: Arc<dyn VarSource + Send + Sync>,
+    ) -> Result<String, crate::Error> {
         #[derive(Debug, Serialize)]
         #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
         struct Config {
@@ -324,18 +375,44 @@ where
             jdbc_token: String,
         }
         Ok(serde_json::to_string_pretty(&Config {
-            jdbc_table: var_source.get_environment_variable(&["JDBC_TABLE"]).await.ok().unwrap_or_default(),
-            jdbc_user: var_source.get_environment_variable(&["JDBC_USER"]).await.ok().unwrap_or_default(),
-            jdbc_password: var_source.get_environment_variable(&["JDBC_PASSWORD"]).await.ok().unwrap_or_default(),
-            jdbc_driver: var_source.get_environment_variable(&["JDBC_DRIVER"]).await.ok().unwrap_or_default(),
-            jdbc_auth_flag: var_source.get_environment_variable(&["JDBC_AUTH_FLAG"]).await.ok().unwrap_or_default(),
-            jdbc_token: var_source.get_environment_variable(&["JDBC_TOKEN"]).await.ok().unwrap_or_default(),
+            jdbc_table: var_source
+                .get_environment_variable(&["JDBC_TABLE"])
+                .await
+                .ok()
+                .unwrap_or_default(),
+            jdbc_user: var_source
+                .get_environment_variable(&["JDBC_USER"])
+                .await
+                .ok()
+                .unwrap_or_default(),
+            jdbc_password: var_source
+                .get_environment_variable(&["JDBC_PASSWORD"])
+                .await
+                .ok()
+                .unwrap_or_default(),
+            jdbc_driver: var_source
+                .get_environment_variable(&["JDBC_DRIVER"])
+                .await
+                .ok()
+                .unwrap_or_default(),
+            jdbc_auth_flag: var_source
+                .get_environment_variable(&["JDBC_AUTH_FLAG"])
+                .await
+                .ok()
+                .unwrap_or_default(),
+            jdbc_token: var_source
+                .get_environment_variable(&["JDBC_TOKEN"])
+                .await
+                .ok()
+                .unwrap_or_default(),
         })
         .unwrap())
     }
 
-    async fn get_snowflake_config(&self, var_source: Arc<dyn VarSource + Send + Sync>) -> Result<String, crate::Error>
-    {
+    async fn get_snowflake_config(
+        &self,
+        var_source: Arc<dyn VarSource + Send + Sync>,
+    ) -> Result<String, crate::Error> {
         #[derive(Debug, Serialize)]
         #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
         struct Config {
@@ -345,16 +422,34 @@ where
             jdbc_sf_password: String,
         }
         Ok(serde_json::to_string_pretty(&Config {
-            jdbc_sf_url: var_source.get_environment_variable(&["JDBC_SF_URL"]).await.ok().unwrap_or_default(),
-            jdbc_sf_user: var_source.get_environment_variable(&["JDBC_SF_USER"]).await.ok().unwrap_or_default(),
-            jdbc_sf_role: var_source.get_environment_variable(&["JDBC_SF_ROLE"]).await.ok().unwrap_or_default(),
-            jdbc_sf_password: var_source.get_environment_variable(&["JDBC_SF_PASSWORD"]).await.ok().unwrap_or_default(),
+            jdbc_sf_url: var_source
+                .get_environment_variable(&["JDBC_SF_URL"])
+                .await
+                .ok()
+                .unwrap_or_default(),
+            jdbc_sf_user: var_source
+                .get_environment_variable(&["JDBC_SF_USER"])
+                .await
+                .ok()
+                .unwrap_or_default(),
+            jdbc_sf_role: var_source
+                .get_environment_variable(&["JDBC_SF_ROLE"])
+                .await
+                .ok()
+                .unwrap_or_default(),
+            jdbc_sf_password: var_source
+                .get_environment_variable(&["JDBC_SF_PASSWORD"])
+                .await
+                .ok()
+                .unwrap_or_default(),
         })
         .unwrap())
     }
 
-    async fn get_kafka_config(&self, var_source: Arc<dyn VarSource + Send + Sync>) -> Result<String, crate::Error>
-    {
+    async fn get_kafka_config(
+        &self,
+        var_source: Arc<dyn VarSource + Send + Sync>,
+    ) -> Result<String, crate::Error> {
         #[derive(Debug, Serialize)]
         #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
         struct Config {
@@ -362,7 +457,10 @@ where
         }
         Ok(serde_json::to_string_pretty(&Config {
             kafka_sasl_jaas_config: var_source
-                .get_environment_variable(&["KAFKA_SASL_JAAS_CONFIG"]).await.ok().unwrap_or_default(),
+                .get_environment_variable(&["KAFKA_SASL_JAAS_CONFIG"])
+                .await
+                .ok()
+                .unwrap_or_default(),
         })
         .unwrap())
     }

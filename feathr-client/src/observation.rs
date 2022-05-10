@@ -40,6 +40,12 @@ where
     }
 }
 
+impl<'a> Into<ObservationSettings> for &'a ObservationSettings {
+    fn into(self) -> ObservationSettings {
+        self.to_owned()
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ObservationInnerSettings {

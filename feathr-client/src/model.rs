@@ -303,9 +303,18 @@ where
     }
 }
 
+impl From<&Transformation> for Transformation {
+    fn from(t: &Transformation) -> Self {
+        t.to_owned()
+    }
+}
+
+/**
+ * Derived feature uses a slightly different config format for transformation, no idea why
+ */
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
-pub enum DerivedTransformation {
+pub(crate) enum DerivedTransformation {
     Expression {
         definition: String,
     },

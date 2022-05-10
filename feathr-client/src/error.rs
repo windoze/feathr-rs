@@ -22,12 +22,6 @@ pub enum Error {
     #[error("Key alias {1} not found in derived feature {0}, existing keys are: {2}")]
     KeyAliasNotFound(String, String, String),
 
-    #[error("Source {0} has no HDFS url")]
-    MissingHdfsUrl(String),
-
-    #[error("Source {0} has no JDBC url")]
-    MissingJdbcUrl(String),
-
     #[error("Source {0} has neither dbtable nor query set")]
     SourceNoQuery(String),
 
@@ -48,9 +42,6 @@ pub enum Error {
 
     #[error(transparent)]
     LivyClientError(#[from] livy_client::LivyClientError),
-
-    #[error(transparent)]
-    ClientCredentialError(#[from] azure_identity::client_credentials_flow::ClientCredentialError),
 
     #[error(transparent)]
     AzureStorageError(#[from] azure_storage::Error),

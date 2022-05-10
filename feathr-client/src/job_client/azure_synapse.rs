@@ -12,7 +12,7 @@ use log::debug;
 use reqwest::Url;
 use tokio::io::AsyncReadExt;
 
-use crate::{JobClient, JobId, Logged, VarSource};
+use crate::{JobClient, JobId, JobStatus, Logged, VarSource};
 
 pub struct AzureSynapseClient {
     livy_client: LivyClient<AadAuthenticator>,
@@ -74,32 +74,32 @@ impl AzureSynapseClient {
 
 #[async_trait]
 impl JobClient for AzureSynapseClient {
-    type JobStatus = LivyStates;
-
-    async fn from_var_source(var_source: Arc<dyn VarSource + Send + Sync>) -> Result<Self, crate::Error>
-    {
-        let (container, storage_account, workspace_dir) =
-            parse_abfs(var_source.get_environment_variable(&[
-                "spark_config",
-                "azure_synapse",
-                "workspace_dir",
-            ]).await?)?;
+    async fn from_var_source(
+        var_source: Arc<dyn VarSource + Send + Sync>,
+    ) -> Result<Self, crate::Error> {
+        let (container, storage_account, workspace_dir) = parse_abfs(
+            var_source
+                .get_environment_variable(&["spark_config", "azure_synapse", "workspace_dir"])
+                .await?,
+        )?;
         Ok(Self {
             livy_client: AzureSynapseClientBuilder::default()
-                .url(var_source.get_environment_variable(&[
-                    "spark_config",
-                    "azure_synapse",
-                    "dev_url",
-                ]).await?)
-                .pool(var_source.get_environment_variable(&[
-                    "spark_config",
-                    "azure_synapse",
-                    "pool_name",
-                ]).await?)
+                .url(
+                    var_source
+                        .get_environment_variable(&["spark_config", "azure_synapse", "dev_url"])
+                        .await?,
+                )
+                .pool(
+                    var_source
+                        .get_environment_variable(&["spark_config", "azure_synapse", "pool_name"])
+                        .await?,
+                )
                 .build()?,
             storage_client: DataLakeClient::new(
                 StorageSharedKeyCredential::new(
-                    var_source.get_environment_variable(&["ADLS_ACCOUNT"]).await?,
+                    var_source
+                        .get_environment_variable(&["ADLS_ACCOUNT"])
+                        .await?,
                     var_source.get_environment_variable(&["ADLS_KEY"]).await?,
                 ),
                 None,
@@ -141,8 +141,7 @@ impl JobClient for AzureSynapseClient {
         &self,
         var_source: Arc<dyn VarSource + Send + Sync>,
         request: super::SubmitJobRequest,
-    ) -> Result<JobId, crate::Error>
-    {
+    ) -> Result<JobId, crate::Error> {
         let args = self.get_arguments(var_source, &request).await?;
         let main_jar_file = request.main_jar_path;
         let mut orig_files: Vec<String> = vec![];
@@ -199,23 +198,8 @@ impl JobClient for AzureSynapseClient {
         Ok(JobId(jid))
     }
 
-    fn is_ended_status(&self, status: Self::JobStatus) -> bool {
-        matches!(
-            status,
-            LivyStates::Dead
-                | LivyStates::Error
-                | LivyStates::Killed
-                | LivyStates::Success
-                | LivyStates::Busy
-        )
-    }
-
-    fn is_successful_status(&self, status: Self::JobStatus) -> bool {
-        status == LivyStates::Success
-    }
-
-    async fn get_job_status(&self, job_id: JobId) -> Result<Self::JobStatus, crate::Error> {
-        Ok(self.livy_client.get_batch_job(job_id.0).await?.state)
+    async fn get_job_status(&self, job_id: JobId) -> Result<JobStatus, crate::Error> {
+        Ok(self.livy_client.get_batch_job(job_id.0).await?.state.into())
     }
 
     async fn get_job_log(&self, job_id: JobId) -> Result<String, crate::Error> {
@@ -244,7 +228,7 @@ impl JobClient for AzureSynapseClient {
         let file_client = fs_client.get_file_client(dir);
         Ok(file_client.read().into_future().await?.data)
     }
-    
+
     async fn upload_or_get_url(&self, path: &str) -> Result<String, crate::Error> {
         let bytes = if path.starts_with("http:") || path.starts_with("https:") {
             // It's a Internet file
@@ -282,9 +266,8 @@ impl JobClient for AzureSynapseClient {
             "abfss://{}@{}.dfs.core.windows.net/{}",
             self.container,
             self.storage_account,
-            [self.workspace_dir.as_str(), filename]
+            [self.workspace_dir.as_str().trim_end_matches("/"), filename]
                 .join("/")
-                .replace("//", "/") // In case workspace_dir is "/"
                 .trim_start_matches("/")
                 .to_string()
         )
@@ -342,6 +325,21 @@ fn parse_abfs<T: AsRef<str>>(abfs_url: T) -> Result<(String, String, String), cr
         .ok_or_else(|| crate::Error::InvalidUrl(url.to_string()))?;
     let path = url.path().trim_start_matches("/").to_string();
     Ok((container, account_name, path))
+}
+
+impl Into<JobStatus> for LivyStates {
+    fn into(self) -> JobStatus {
+        match self {
+            LivyStates::Error | LivyStates::Dead | LivyStates::Killed => JobStatus::Failed,
+            LivyStates::Busy
+            | LivyStates::Idle
+            | LivyStates::Running
+            | LivyStates::Recovering
+            | LivyStates::ShuttingDown => JobStatus::Running,
+            LivyStates::NotStarted | LivyStates::Starting => JobStatus::Starting,
+            LivyStates::Success => JobStatus::Success,
+        }
+    }
 }
 
 #[cfg(test)]

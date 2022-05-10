@@ -48,3 +48,12 @@ impl FeatureQuery {
         }
     }
 }
+
+impl<T> From<&[T]> for FeatureQuery
+where
+    T: ToString
+{
+    fn from(names: &[T]) -> Self {
+        FeatureQuery::by_name(names)
+    }
+}

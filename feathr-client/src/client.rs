@@ -3,8 +3,8 @@ use std::{path::Path, sync::Arc, time::Duration};
 use log::debug;
 
 use crate::{
-    load_var_source, AzureSynapseClient, FeathrApiClient, FeathrProject, FeatureRegistry,
-    JobClient, JobId, SubmitJobRequest, VarSource,
+    load_var_source, AzureSynapseClient, Error, FeathrApiClient, FeathrProject, FeatureRegistry,
+    JobClient, JobId, JobStatus, SubmitJobRequest, VarSource,
 };
 
 pub struct FeathrClient {
@@ -14,7 +14,7 @@ pub struct FeathrClient {
 }
 
 impl FeathrClient {
-    pub async fn load<T>(conf_file: T) -> Result<Self, crate::Error>
+    pub async fn load<T>(conf_file: T) -> Result<Self, Error>
     where
         T: AsRef<Path>,
     {
@@ -26,11 +26,11 @@ impl FeathrClient {
         })
     }
 
-    pub async fn load_project(&self, name: &str) -> Result<FeathrProject, crate::Error> {
+    pub async fn load_project(&self, name: &str) -> Result<FeathrProject, Error> {
         self.registry_client.load_project(name).await
     }
 
-    pub async fn submit_job(&self, request: SubmitJobRequest) -> Result<JobId, crate::Error> {
+    pub async fn submit_job(&self, request: SubmitJobRequest) -> Result<JobId, Error> {
         self.job_client
             .submit_job(self.var_source.clone(), request)
             .await
@@ -40,15 +40,17 @@ impl FeathrClient {
         &self,
         job_id: JobId,
         timeout: Option<Duration>,
-    ) -> Result<String, crate::Error> {
+    ) -> Result<String, Error> {
         let status = self.job_client.wait_for_job(job_id, timeout).await?;
         debug!("Job {} completed with status {}", job_id, status);
         self.job_client.get_job_log(job_id).await
     }
+
+    pub async fn get_job_status(&self, job_id: JobId) -> Result<JobStatus, Error> {
+        self.job_client.get_job_status(job_id).await
+    }
 }
 
-#[allow(dead_code)]
-#[allow(unused_variables)]
 #[cfg(test)]
 mod tests {
     use dotenv;
@@ -120,47 +122,39 @@ mod tests {
             .build()
             .unwrap();
 
+        let trans = Transformation::window_agg(
+            "cast_float(fare_amount)",
+            Aggregation::AVG,
+            Duration::from_days(90),
+        ).unwrap();
+
         let f_location_avg_fare = agg_features
             .anchor("f_location_avg_fare", FeatureType::FLOAT)
             .unwrap()
-            .keys(&[location_id.clone()])
-            .transform(
-                Transformation::window_agg(
-                    "cast_float(fare_amount)",
-                    Aggregation::AVG,
-                    Duration::from_days(90),
-                )
-                .unwrap(),
-            )
+            .keys(&[&location_id])
+            .transform(&trans)
             .build()
             .unwrap();
 
         let f_location_max_fare = agg_features
             .anchor("f_location_avg_fare", FeatureType::FLOAT)
             .unwrap()
-            .keys(&[location_id.clone()])
-            .transform(
-                Transformation::window_agg(
-                    "cast_float(fare_amount)",
-                    Aggregation::MAX,
-                    Duration::from_days(90),
-                )
-                .unwrap(),
-            )
+            .keys(&[&location_id])
+            .transform(trans)
             .build()
             .unwrap();
 
         let f_trip_time_distance = proj
             .derived("f_trip_time_distance", FeatureType::FLOAT)
-            .add_input(f_trip_distance.clone())
-            .add_input(f_trip_time_duration.clone())
+            .add_input(&f_trip_distance)
+            .add_input(&f_trip_time_duration)
             .transform("f_trip_distance * f_trip_time_duration")
             .build()
             .unwrap();
 
         let f_trip_time_rounded = proj
             .derived("f_trip_time_rounded", FeatureType::INT32)
-            .add_input(f_trip_time_duration.clone())
+            .add_input(&f_trip_time_duration)
             .transform("f_trip_time_duration % 10")
             .build()
             .unwrap();
@@ -168,23 +162,31 @@ mod tests {
         println!("features.conf:\n{}", proj.get_feature_config().unwrap());
 
         let output = "abfss://xchfeathrtest4fs@xchfeathrtest4sto.dfs.core.windows.net/output.bin";
-        let q = FeatureQuery::new(
+        let anchor_query = FeatureQuery::new(
             &[
-                "f_location_avg_fare",
-                "f_trip_time_distance",
+                &f_trip_distance,
+                &f_trip_time_duration,
+                &f_is_long_trip_distance,
+                &f_day_of_week,
+                &f_location_avg_fare,
+                &f_location_max_fare,
             ],
+            &[&location_id],
+        );
+        let derived_query = FeatureQuery::new(
+            &[&f_trip_time_distance, &f_trip_time_rounded],
             &[&location_id],
         );
         let ob = ObservationSettings::new("wasbs://public@azurefeathrstorage.blob.core.windows.net/sample_data/green_tripdata_2020-04.csv", "lpep_dropoff_datetime", "yyyy-MM-dd HH:mm:ss");
 
         println!(
             "features_join.conf:\n{}",
-            proj.get_feature_join_config(ob.clone(), vec![q.clone()], output)
+            proj.get_feature_join_config(&ob, &[&anchor_query, &derived_query], output)
                 .unwrap()
         );
 
         let req = proj
-            .feature_join_job(ob, vec![q], output)
+            .feature_join_job(&ob, &[&anchor_query, &derived_query], output)
             .unwrap()
             .output_path(output)
             .build();
@@ -206,5 +208,7 @@ mod tests {
                 .unwrap()
                 .unwrap()
         );
+
+        assert_eq!(client.get_job_status(id).await.unwrap(), JobStatus::Success);
     }
 }

@@ -118,17 +118,22 @@ impl FeathrProject {
     /**
      * Creates the Spark job request for a feature-joining job
      */
-    pub fn feature_join_job(
+    pub fn feature_join_job<O, Q>(
         &self,
-        observation_settings: ObservationSettings,
-        feature_query: Vec<FeatureQuery>,
+        observation_settings: O,
+        feature_query: &[&Q],
         output: &str,
-    ) -> Result<SubmitJobRequestBuilder, Error> {
+    ) -> Result<SubmitJobRequestBuilder, Error>
+    where
+        O: Into<ObservationSettings>,
+        Q: Into<FeatureQuery> + Clone,
+    {
+        let ob = observation_settings.into();
         Ok(SubmitJobRequestBuilder::new_join(
             format!("{}_feathr_feature_join_job", self.inner.read()?.name),
-            observation_settings.observation_path.to_string(),
+            ob.observation_path.to_string(),
             self.get_feature_config()?,
-            self.get_feature_join_config(observation_settings, feature_query, output)?,
+            self.get_feature_join_config(ob, feature_query, output)?,
             self.get_secret_keys()?,
         ))
     }
@@ -159,12 +164,16 @@ impl FeathrProject {
         Ok(s)
     }
 
-    pub(crate) fn get_feature_join_config(
+    pub(crate) fn get_feature_join_config<O, Q>(
         &self,
-        observation_settings: ObservationSettings,
-        feature_query: Vec<FeatureQuery>,
+        observation_settings: O,
+        feature_query: &[&Q],
         output: &str,
-    ) -> Result<String, Error> {
+    ) -> Result<String, Error>
+    where
+        O: Into<ObservationSettings>,
+        Q: Into<FeatureQuery> + Clone,
+    {
         // TODO: Validate feature names
 
         #[derive(Clone, Debug, Serialize)]
@@ -176,8 +185,8 @@ impl FeathrProject {
             output_path: String,
         }
         let cfg = FeatureJoinConfig {
-            observation_settings,
-            feature_list: feature_query,
+            observation_settings: observation_settings.into(),
+            feature_list: feature_query.into_iter().map(|&q| q.to_owned().into()).collect(),
             output_path: output.to_string(),
         };
         Ok(serde_json::to_string_pretty(&cfg)?)
@@ -442,11 +451,11 @@ mod tests {
             .anchor("f1", FeatureType::INT32)
             .unwrap()
             .transform("x")
-            .keys(&[k1, k2])
+            .keys(&[&k1, &k2])
             .build()
             .unwrap();
         proj.derived("d1", FeatureType::INT32)
-            .add_input(f)
+            .add_input(&f)
             .transform("1")
             .build()
             .unwrap();

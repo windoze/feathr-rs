@@ -51,8 +51,8 @@ impl AnchorFeatureBuilder {
         self
     }
 
-    pub fn keys(&mut self, keys: &[TypedKey]) -> &mut Self {
-        self.keys = keys.iter().map(|k| k.to_owned()).collect();
+    pub fn keys(&mut self, keys: &[&TypedKey]) -> &mut Self {
+        self.keys = keys.into_iter().map(|&k| k.to_owned()).collect();
         self
     }
 
@@ -132,8 +132,8 @@ impl DerivedFeatureBuilder {
         self
     }
 
-    pub fn keys(&mut self, keys: &[TypedKey]) -> &mut Self {
-        self.keys = keys.iter().map(|k| k.to_owned()).collect();
+    pub fn keys(&mut self, keys: &[&TypedKey]) -> &mut Self {
+        self.keys = keys.iter().map(|&k| k.to_owned()).collect();
         self
     }
 
@@ -143,7 +143,7 @@ impl DerivedFeatureBuilder {
         self
     }
 
-    pub fn add_input<T: Feature>(&mut self, feature: T) -> &mut Self {
+    pub fn add_input<T: Feature>(&mut self, feature: &T) -> &mut Self {
         self.input_features.push(InputFeature {
             key: feature.get_key(),
             feature: feature.get_name(),
