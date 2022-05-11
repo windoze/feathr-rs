@@ -85,7 +85,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn materialization_job() {
+    async fn materialization_e2e_job() {
         let client = init().await;
         let proj = FeathrProject::new("p1");
         let batch_source = proj.hdfs_source("nycTaxiBatchSource", "wasbs://public@azurefeathrstorage.blob.core.windows.net/sample_data/green_tripdata_2020-04.csv")
@@ -141,22 +141,23 @@ mod tests {
             println!("{}:\n{}", r.job_config_file_name, r.gen_job_config);
         }
 
-        let job_ids = client
-            .submit_jobs(reqs)
-            .await
-            .unwrap()
-            .into_iter()
-            .map(|id| client.wait_for_job(id, None));
-        let outputs: Vec<String> = join_all(job_ids)
+        let job_ids = client.submit_jobs(reqs).await.unwrap();
+
+        let finished = job_ids.iter().map(|&id| client.wait_for_job(id, None));
+        let outputs: Vec<String> = join_all(finished)
             .await
             .into_iter()
             .map(|r| r.unwrap())
             .collect();
         println!("{:#?}", outputs);
+
+        for id in job_ids.into_iter() {
+            assert_eq!(client.get_job_status(id).await.unwrap(), JobStatus::Success);
+        }
     }
 
     #[tokio::test]
-    async fn join_job() {
+    async fn join_e2e_job() {
         let client = init().await;
         let proj = FeathrProject::new("p1");
         let batch_source = proj.hdfs_source("nycTaxiBatchSource", "wasbs://public@azurefeathrstorage.blob.core.windows.net/sample_data/green_tripdata_2020-04.csv")
