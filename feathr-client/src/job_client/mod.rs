@@ -18,7 +18,7 @@ pub use databricks::DatabricksClient;
 
 pub(crate) const OUTPUT_PATH_TAG: &str = "output_path";
 pub(crate) const FEATHR_JOB_JAR_PATH: &str =
-    "wasbs://public@azurefeathrstorage.blob.core.windows.net/feathr-assembly-LATEST.jar";
+    "wasbs://public@xchfeathrtest4sto.blob.core.windows.net/feathr-assembly-0.4.0.jar";
 pub(crate) const JOIN_JOB_MAIN_CLASS_NAME: &str = "com.linkedin.feathr.offline.job.FeatureJoinJob";
 pub(crate) const GEN_JOB_MAIN_CLASS_NAME: &str = "com.linkedin.feathr.offline.job.FeatureGenJob";
 
@@ -275,6 +275,7 @@ where
                 .into_iter(),
             );
         }
+        debug!("Arguments: {}", serde_json::to_string_pretty(&ret).unwrap());
         Ok(ret)
     }
 

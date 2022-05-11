@@ -66,7 +66,7 @@ impl FeathrClient {
 
 #[cfg(test)]
 mod tests {
-    use chrono::{Duration, Utc};
+    use chrono::{Duration, TimeZone, Utc};
     use dotenv;
     use std::sync::Once;
 
@@ -121,16 +121,16 @@ mod tests {
             .unwrap();
 
         let f_location_max_fare = agg_features
-            .anchor("f_location_avg_fare", FeatureType::FLOAT)
+            .anchor("f_location_max_fare", FeatureType::FLOAT)
             .unwrap()
             .keys(&[&location_id])
             .transform(trans)
             .build()
             .unwrap();
 
-        let now = Utc::now();
+        let start = Utc.ymd(2020, 5, 20).and_hms(0, 0, 0);
         let reqs = proj
-            .feature_gen_job(now - Duration::hours(3), now, DateTimeResolution::Hourly)
+            .feature_gen_job(start, start + Duration::days(1), DateTimeResolution::Daily)
             .unwrap()
             .sink(RedisSink::new("table1"))
             .feature(&f_location_avg_fare)

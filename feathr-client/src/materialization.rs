@@ -40,7 +40,7 @@ impl RedisSink {
     pub fn new(table_name: &str) -> Self {
         Self {
             table_name: table_name.to_string(),
-            streaming: true,
+            streaming: false,
             streaming_timeout: None,
         }
     }
@@ -48,7 +48,7 @@ impl RedisSink {
     pub fn with_timeout(table_name: &str, timeout: Duration) -> Self {
         Self {
             table_name: table_name.to_string(),
-            streaming: true,
+            streaming: false,
             streaming_timeout: Some(timeout),
         }
     }
