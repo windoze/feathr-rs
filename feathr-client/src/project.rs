@@ -1,6 +1,7 @@
 use std::sync::RwLock;
 use std::{collections::HashMap, sync::Arc};
 
+use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde::ser::SerializeStruct;
 use serde::Serialize;
@@ -8,8 +9,9 @@ use serde::Serialize;
 use crate::feature::{AnchorFeature, AnchorFeatureImpl, DerivedFeature, DerivedFeatureImpl};
 use crate::feature_builder::{AnchorFeatureBuilder, DerivedFeatureBuilder};
 use crate::{
-    Error, Feature, FeatureQuery, FeatureType, HdfsSourceBuilder, JdbcSourceBuilder,
-    ObservationSettings, Source, SourceImpl, SubmitJobRequestBuilder, TypedKey,
+    DateTimeResolution, Error, Feature, FeatureQuery, FeatureType, HdfsSourceBuilder,
+    JdbcSourceBuilder, ObservationSettings, Source, SourceImpl, SubmitGenerationJobRequestBuilder,
+    SubmitJoiningJobRequestBuilder, TypedKey,
 };
 
 /**
@@ -123,13 +125,13 @@ impl FeathrProject {
         observation_settings: O,
         feature_query: &[&Q],
         output: &str,
-    ) -> Result<SubmitJobRequestBuilder, Error>
+    ) -> Result<SubmitJoiningJobRequestBuilder, Error>
     where
         O: Into<ObservationSettings>,
         Q: Into<FeatureQuery> + Clone,
     {
         let ob = observation_settings.into();
-        Ok(SubmitJobRequestBuilder::new_join(
+        Ok(SubmitJoiningJobRequestBuilder::new_join(
             format!("{}_feathr_feature_join_job", self.inner.read()?.name),
             ob.observation_path.to_string(),
             self.get_feature_config()?,
@@ -141,16 +143,23 @@ impl FeathrProject {
     /**
      * Creates the Spark job request for a feature-generation job
      */
-    pub fn feature_gen_job(&self) -> Result<SubmitJobRequestBuilder, Error> {
-        Ok(SubmitJobRequestBuilder::new_gen(
+    pub fn feature_gen_job(
+        &self,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+        step: DateTimeResolution,
+    ) -> Result<SubmitGenerationJobRequestBuilder, Error> {
+        Ok(SubmitGenerationJobRequestBuilder::new_gen(
             format!(
                 "{}_feathr_feature_materialization_job",
                 self.inner.read()?.name
             ),
             Default::default(), // TODO:
             self.get_feature_config()?,
-            self.get_feature_gen_config()?,
             self.get_secret_keys()?,
+            start,
+            end,
+            step,
         ))
     }
 
@@ -186,14 +195,13 @@ impl FeathrProject {
         }
         let cfg = FeatureJoinConfig {
             observation_settings: observation_settings.into(),
-            feature_list: feature_query.into_iter().map(|&q| q.to_owned().into()).collect(),
+            feature_list: feature_query
+                .into_iter()
+                .map(|&q| q.to_owned().into())
+                .collect(),
             output_path: output.to_string(),
         };
         Ok(serde_json::to_string_pretty(&cfg)?)
-    }
-
-    pub(crate) fn get_feature_gen_config(&self) -> Result<String, Error> {
-        todo!()
     }
 }
 
@@ -258,8 +266,6 @@ impl FeathrProjectImpl {
             .collect()
     }
 }
-
-
 
 #[allow(dead_code)]
 #[derive(Debug)]
@@ -439,7 +445,10 @@ mod tests {
     fn it_works() {
         let proj = FeathrProject::new("p1");
         let s = proj
-            .jdbc_source("h1", "jdbc:sqlserver://bet-test.database.windows.net:1433;database=bet-test")
+            .jdbc_source(
+                "h1",
+                "jdbc:sqlserver://bet-test.database.windows.net:1433;database=bet-test",
+            )
             .auth(JdbcSourceAuth::Userpass)
             .dbtable("AzureRegions")
             .build()

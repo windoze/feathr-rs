@@ -37,6 +37,18 @@ impl FeathrClient {
             .await
     }
 
+    pub async fn submit_jobs(&self, requests: Vec<SubmitJobRequest>) -> Result<Vec<JobId>, Error> {
+        let mut ret = vec![];
+        for request in requests.into_iter() {
+            ret.push(
+                self.job_client
+                    .submit_job(self.var_source.clone(), request)
+                    .await?,
+            )
+        }
+        Ok(ret)
+    }
+
     pub async fn wait_for_job(
         &self,
         job_id: JobId,
@@ -54,9 +66,11 @@ impl FeathrClient {
 
 #[cfg(test)]
 mod tests {
-    use chrono::Duration;
+    use chrono::{Duration, Utc};
     use dotenv;
     use std::sync::Once;
+
+    use futures::future::join_all;
 
     use crate::*;
 
@@ -71,7 +85,78 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn it_works() {
+    async fn materialization_job() {
+        let client = init().await;
+        let proj = FeathrProject::new("p1");
+        let batch_source = proj.hdfs_source("nycTaxiBatchSource", "wasbs://public@azurefeathrstorage.blob.core.windows.net/sample_data/green_tripdata_2020-04.csv")
+            .time_window(
+                "lpep_dropoff_datetime",
+                "yyyy-MM-dd HH:mm:ss"
+            )
+            .build()
+            .unwrap();
+
+        let location_id = TypedKey::new("DOLocationID", ValueType::INT32)
+            .full_name("nyc_taxi.location_id")
+            .description("location id in NYC");
+
+        let trans = Transformation::window_agg(
+            "cast_float(fare_amount)",
+            Aggregation::AVG,
+            Duration::days(90),
+        )
+        .unwrap();
+
+        let agg_features = proj
+            .anchor_group("aggregationFeatures", batch_source)
+            .build()
+            .unwrap();
+
+        let f_location_avg_fare = agg_features
+            .anchor("f_location_avg_fare", FeatureType::FLOAT)
+            .unwrap()
+            .keys(&[&location_id])
+            .transform(&trans)
+            .build()
+            .unwrap();
+
+        let f_location_max_fare = agg_features
+            .anchor("f_location_avg_fare", FeatureType::FLOAT)
+            .unwrap()
+            .keys(&[&location_id])
+            .transform(trans)
+            .build()
+            .unwrap();
+
+        let now = Utc::now();
+        let reqs = proj
+            .feature_gen_job(now - Duration::hours(3), now, DateTimeResolution::Hourly)
+            .unwrap()
+            .sink(RedisSink::new("table1"))
+            .feature(&f_location_avg_fare)
+            .feature(&f_location_max_fare)
+            .build()
+            .unwrap();
+        for r in reqs.iter() {
+            println!("{}:\n{}", r.job_config_file_name, r.gen_job_config);
+        }
+
+        let job_ids = client
+            .submit_jobs(reqs)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|id| client.wait_for_job(id, None));
+        let outputs: Vec<String> = join_all(job_ids)
+            .await
+            .into_iter()
+            .map(|r| r.unwrap())
+            .collect();
+        println!("{:#?}", outputs);
+    }
+
+    #[tokio::test]
+    async fn join_job() {
         let client = init().await;
         let proj = FeathrProject::new("p1");
         let batch_source = proj.hdfs_source("nycTaxiBatchSource", "wasbs://public@azurefeathrstorage.blob.core.windows.net/sample_data/green_tripdata_2020-04.csv")
@@ -127,7 +212,8 @@ mod tests {
             "cast_float(fare_amount)",
             Aggregation::AVG,
             Duration::days(90),
-        ).unwrap();
+        )
+        .unwrap();
 
         let f_location_avg_fare = agg_features
             .anchor("f_location_avg_fare", FeatureType::FLOAT)

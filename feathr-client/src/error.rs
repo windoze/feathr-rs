@@ -1,5 +1,6 @@
 use std::sync::PoisonError;
 
+use chrono::{DateTime, Utc};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -22,7 +23,7 @@ pub enum Error {
     #[error("Key alias {1} not found in derived feature {0}, existing keys are: {2}")]
     KeyAliasNotFound(String, String, String),
 
-    #[error("Source {0} has neither dbtable nor query set")]
+    #[error("Source {0} has neither `dbtable` nor `query` set")]
     SourceNoQuery(String),
 
     #[error("For anchors of non-INPUT_CONTEXT source, key of feature {0} should be explicitly specified and not left blank")]
@@ -72,6 +73,9 @@ pub enum Error {
     
     #[error(transparent)]
     KeyVaultError(#[from] azure_security_keyvault::Error),
+
+    #[error("Invalid Time Range {0} - {1}")]
+    InvalidTimeRange(DateTime<Utc>, DateTime<Utc>),
 }
 
 impl<Guard> From<PoisonError<Guard>> for Error {
