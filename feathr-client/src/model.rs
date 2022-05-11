@@ -1,5 +1,4 @@
-use std::time::Duration;
-
+use chrono::Duration;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::utils::{dur_to_string, str_to_dur};

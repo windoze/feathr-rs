@@ -1,5 +1,6 @@
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{path::Path, sync::Arc};
 
+use chrono::Duration;
 use log::debug;
 
 use crate::{
@@ -53,9 +54,9 @@ impl FeathrClient {
 
 #[cfg(test)]
 mod tests {
+    use chrono::Duration;
     use dotenv;
     use std::sync::Once;
-    use std::time::Duration;
 
     use crate::*;
 
@@ -125,7 +126,7 @@ mod tests {
         let trans = Transformation::window_agg(
             "cast_float(fare_amount)",
             Aggregation::AVG,
-            Duration::from_days(90),
+            Duration::days(90),
         ).unwrap();
 
         let f_location_avg_fare = agg_features

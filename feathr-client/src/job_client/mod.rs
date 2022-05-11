@@ -3,12 +3,12 @@ mod databricks;
 
 use std::{
     collections::HashMap,
-    sync::Arc,
-    time::{Duration, SystemTime},
+    sync::Arc, time::Instant,
 };
 
 use async_trait::async_trait;
 use bytes::Bytes;
+use chrono::Duration;
 use reqwest::Url;
 use serde::Serialize;
 use tokio::io::AsyncWriteExt;
@@ -161,20 +161,20 @@ where
         job_id: JobId,
         timeout: Option<Duration>,
     ) -> Result<JobStatus, crate::Error> {
-        let wait_until = timeout.map(|d| SystemTime::now() + d);
+        let wait_until = timeout.map(|d| Instant::now() + d.to_std().unwrap());
         loop {
             let status = self.get_job_status(job_id.clone()).await?;
             if status.is_ended() {
                 return Ok(status);
             } else {
                 if let Some(t) = wait_until {
-                    if SystemTime::now() > t {
+                    if Instant::now() > t {
                         break;
                     }
                 }
             }
             // Check every few seconds
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
         }
         Err(crate::Error::Timeout)
     }
