@@ -225,7 +225,7 @@ pub struct NewCluster {
     pub num_workers: u32,
     pub spark_version: String,
     pub node_type_id: String,
-    pub spark_conf: HashMap<String, String>,
+    pub spark_conf: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_tags: Option<HashMap<String, String>>,
 }
