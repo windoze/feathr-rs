@@ -10,7 +10,6 @@ use livy_client::{
 };
 use log::debug;
 use reqwest::Url;
-use tokio::io::AsyncReadExt;
 
 use crate::{JobClient, JobId, JobStatus, Logged, VarSource};
 
@@ -50,31 +49,7 @@ impl AzureSynapseClient {
         })
     }
 
-    pub fn default() -> Result<Self, crate::Error> {
-        let (container, storage_account, workspace_dir) =
-            parse_abfs(std::env::var("SYNAPSE_WORKSPACE_DIR")?)?;
-        Ok(Self {
-            livy_client: AzureSynapseClientBuilder::default()
-                .url(std::env::var("SYNAPSE_DEV_URL")?)
-                .pool(std::env::var("SYNAPSE_POOL_NAME")?)
-                .build()?,
-            storage_client: DataLakeClient::new(
-                StorageSharedKeyCredential::new(
-                    std::env::var("ADLS_ACCOUNT")?,
-                    std::env::var("ADLS_KEY")?,
-                ),
-                None,
-            ),
-            storage_account,
-            container,
-            workspace_dir: workspace_dir.trim_start_matches("/").to_string(),
-        })
-    }
-}
-
-#[async_trait]
-impl JobClient for AzureSynapseClient {
-    async fn from_var_source(
+    pub async fn from_var_source(
         var_source: Arc<dyn VarSource + Send + Sync>,
     ) -> Result<Self, crate::Error> {
         let (container, storage_account, workspace_dir) = parse_abfs(
@@ -110,6 +85,30 @@ impl JobClient for AzureSynapseClient {
         })
     }
 
+    pub fn default() -> Result<Self, crate::Error> {
+        let (container, storage_account, workspace_dir) =
+            parse_abfs(std::env::var("SYNAPSE_WORKSPACE_DIR")?)?;
+        Ok(Self {
+            livy_client: AzureSynapseClientBuilder::default()
+                .url(std::env::var("SYNAPSE_DEV_URL")?)
+                .pool(std::env::var("SYNAPSE_POOL_NAME")?)
+                .build()?,
+            storage_client: DataLakeClient::new(
+                StorageSharedKeyCredential::new(
+                    std::env::var("ADLS_ACCOUNT")?,
+                    std::env::var("ADLS_KEY")?,
+                ),
+                None,
+            ),
+            storage_account,
+            container,
+            workspace_dir: workspace_dir.trim_start_matches("/").to_string(),
+        })
+    }
+}
+
+#[async_trait]
+impl JobClient for AzureSynapseClient {
     async fn write_remote_file(&self, path: &str, content: &[u8]) -> Result<String, crate::Error> {
         let (container, _, path) = parse_abfs(path)?;
         debug!("Container: {}", container);
@@ -142,10 +141,22 @@ impl JobClient for AzureSynapseClient {
         var_source: Arc<dyn VarSource + Send + Sync>,
         request: super::SubmitJobRequest,
     ) -> Result<JobId, crate::Error> {
-        let args = self.get_arguments(var_source, &request).await?;
-        let main_jar_file = request.main_jar_path;
+        let args = self.get_arguments(var_source.clone(), &request).await?;
+
+        let main_jar_path = if request.main_jar_path.is_empty() {
+            var_source
+                .get_environment_variable(&[
+                    "spark_config",
+                    "azure_synapse",
+                    "feathr_runtime_location",
+                ])
+                .await?
+        } else {
+            request.main_jar_path
+        };
+
         let mut orig_files: Vec<String> = vec![];
-        let mut orig_jars: Vec<String> = vec![];
+        let mut orig_jars: Vec<String> = vec![main_jar_path];
 
         for f in request.reference_files.into_iter() {
             if f.ends_with(".jar") {
@@ -154,7 +165,6 @@ impl JobClient for AzureSynapseClient {
                 orig_files.push(f)
             }
         }
-        orig_jars.push(main_jar_file);
 
         debug!("Uploading JARs: {:#?}", orig_jars);
         let jars = self.multi_upload_or_get_url(&orig_jars).await?;
@@ -229,38 +239,6 @@ impl JobClient for AzureSynapseClient {
         Ok(file_client.read().into_future().await?.data)
     }
 
-    async fn upload_or_get_url(&self, path: &str) -> Result<String, crate::Error> {
-        let bytes = if path.starts_with("http:") || path.starts_with("https:") {
-            // It's a Internet file
-            reqwest::Client::new()
-                .get(path)
-                .send()
-                .await?
-                .bytes()
-                .await?
-        } else if path.contains("://") {
-            // It's a file on the storage
-            // let (container, storage, _) = parse_abfs(path)?;
-            // if container == self.container && storage == self.storage_account {
-            //     // The file is located in this container of this storage, no need to download and upload again
-            //     return Ok(path.to_string());
-            // }
-            // debug!("Transferring from remote storage {} to local storage {}", storage, self.storage_account);
-            // self.read_remote_file(path).await?
-            return Ok(path.to_string());
-        } else {
-            // Local file
-            let mut v: Vec<u8> = vec![];
-            tokio::fs::File::open(path)
-                .await?
-                .read_to_end(&mut v)
-                .await?;
-            Bytes::from(v)
-        };
-        let url = self.get_remote_url(&self.get_file_name(path)?);
-        self.write_remote_file(&url, &bytes).await
-    }
-
     fn get_remote_url(&self, filename: &str) -> String {
         format!(
             "abfss://{}@{}.dfs.core.windows.net/{}",
@@ -271,6 +249,13 @@ impl JobClient for AzureSynapseClient {
                 .trim_start_matches("/")
                 .to_string()
         )
+    }
+
+    fn is_url_on_storage(&self, url: &str) -> bool {
+        url.starts_with("abfs://")
+            || url.starts_with("abfss://")
+            || url.starts_with("wasb://")
+            || url.starts_with("wasbs://")
     }
 }
 

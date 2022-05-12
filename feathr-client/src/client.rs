@@ -4,12 +4,12 @@ use chrono::Duration;
 use log::debug;
 
 use crate::{
-    load_var_source, AzureSynapseClient, Error, FeathrApiClient, FeathrProject, FeatureRegistry,
-    JobClient, JobId, JobStatus, SubmitJobRequest, VarSource,
+    load_var_source, Error, FeathrApiClient, FeathrProject, FeatureRegistry,
+    JobClient, JobId, JobStatus, SubmitJobRequest, VarSource, job_client,
 };
 
 pub struct FeathrClient {
-    job_client: AzureSynapseClient,
+    job_client: job_client::Client,
     registry_client: FeathrApiClient,
     var_source: Arc<dyn VarSource + Send + Sync>,
 }
@@ -21,7 +21,7 @@ impl FeathrClient {
     {
         let var_source = load_var_source(conf_file);
         Ok(Self {
-            job_client: AzureSynapseClient::from_var_source(var_source.clone()).await?,
+            job_client: job_client::Client::from_var_source(var_source.clone()).await?,
             registry_client: FeathrApiClient::from_var_source(var_source.clone()).await?,
             var_source,
         })
@@ -249,7 +249,8 @@ mod tests {
 
         println!("features.conf:\n{}", proj.get_feature_config().unwrap());
 
-        let output = "abfss://xchfeathrtest4fs@xchfeathrtest4sto.dfs.core.windows.net/output.bin";
+        // let output = "abfss://xchfeathrtest4fs@xchfeathrtest4sto.dfs.core.windows.net/output.bin";
+        let output = "dbfs:/test.bin";
         let anchor_query = FeatureQuery::new(
             &[
                 &f_trip_distance,

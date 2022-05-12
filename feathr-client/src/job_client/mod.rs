@@ -1,7 +1,7 @@
 mod azure_synapse;
 mod databricks;
 
-use std::{collections::HashMap, sync::Arc, time::Instant};
+use std::{collections::HashMap, path::Path, sync::Arc, time::Instant};
 
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -9,9 +9,12 @@ use chrono::{DateTime, Duration, Utc};
 use log::debug;
 use reqwest::Url;
 use serde::Serialize;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::{DateTimeResolution, Error, MaterializationSettingsBuilder, OutputSink, VarSource};
+use crate::{
+    load_var_source, DateTimeResolution, Error, MaterializationSettingsBuilder,
+    OutputSink, VarSource,
+};
 
 pub use azure_synapse::AzureSynapseClient;
 pub use databricks::DatabricksClient;
@@ -91,13 +94,6 @@ where
     Self: Sized,
 {
     /**
-     * Create instance from a variable source
-     */
-    async fn from_var_source(
-        var_source: Arc<dyn VarSource + Send + Sync>,
-    ) -> Result<Self, crate::Error>;
-
-    /**
      * Create file on the remote side and returns Spark compatible URL of the file
      */
     async fn write_remote_file(&self, path: &str, content: &[u8]) -> Result<String, crate::Error>;
@@ -132,14 +128,14 @@ where
     async fn get_job_output_url(&self, job_id: JobId) -> Result<Option<String>, crate::Error>;
 
     /**
-     * Upload file if it's local, or move the file to the workspace if it's at somewhere else
-     */
-    async fn upload_or_get_url(&self, path: &str) -> Result<String, crate::Error>;
-
-    /**
      * Construct remote URL for the filename
      */
     fn get_remote_url(&self, filename: &str) -> String;
+
+    /**
+     * Check if the URL is on the storage
+     */
+    fn is_url_on_storage(&self, url: &str) -> bool;
 
     /**
      * Same as `upload_or_get_url`, but for multiple files
@@ -189,6 +185,34 @@ where
         let mut file = tokio::fs::File::create(file_path).await?;
         file.write_all_buf(&mut bytes).await?;
         Ok(())
+    }
+
+    /**
+     * Upload file if it's local, or move the file to the workspace if it's at somewhere else
+     */
+    async fn upload_or_get_url(&self, path: &str) -> Result<String, crate::Error> {
+        let bytes = if path.starts_with("http:") || path.starts_with("https:") {
+            // It's a Internet file
+            reqwest::Client::new()
+                .get(path)
+                .send()
+                .await?
+                .bytes()
+                .await?
+        } else if self.is_url_on_storage(path) {
+            // It's a file on the storage
+            return Ok(path.to_string());
+        } else {
+            // Local file
+            let mut v: Vec<u8> = vec![];
+            tokio::fs::File::open(path)
+                .await?
+                .read_to_end(&mut v)
+                .await?;
+            Bytes::from(v)
+        };
+        let url = self.get_remote_url(&self.get_file_name(path)?);
+        self.write_remote_file(&url, &bytes).await
     }
 
     /**
@@ -578,7 +602,7 @@ impl SubmitJoiningJobRequestBuilder {
             main_jar_path: self
                 .main_jar_path
                 .to_owned()
-                .unwrap_or_else(|| FEATHR_JOB_JAR_PATH.to_string()),
+                .unwrap_or_default(),
             main_class_name: self
                 .main_class_name
                 .to_owned()
@@ -718,3 +742,126 @@ impl SubmitGenerationJobRequestBuilder {
             .collect())
     }
 }
+
+pub enum Client {
+    AzureSynapse(Arc<AzureSynapseClient>),
+    Databricks(Arc<DatabricksClient>),
+}
+
+#[async_trait]
+impl JobClient for Client {
+    /**
+     * Create file on the remote side and returns Spark compatible URL of the file
+     */
+    async fn write_remote_file(&self, path: &str, content: &[u8]) -> Result<String, crate::Error> {
+        match self {
+            Client::AzureSynapse(c) => c.write_remote_file(path, content),
+            Client::Databricks(c) => c.write_remote_file(path, content),
+        }.await
+    }
+
+    /**
+     * Read file content from a Spark compatible URL
+     */
+    async fn read_remote_file(&self, path: &str) -> Result<Bytes, crate::Error> {
+        match self {
+            Client::AzureSynapse(c) => c.read_remote_file(path),
+            Client::Databricks(c) => c.read_remote_file(path),
+        }.await
+    }
+
+    /**
+     * Submit Spark job, upload files if necessary
+     */
+    async fn submit_job(
+        &self,
+        var_source: Arc<dyn VarSource + Send + Sync>,
+        request: SubmitJobRequest,
+    ) -> Result<JobId, crate::Error> {
+        match self {
+            Client::AzureSynapse(c) => c.submit_job(var_source, request),
+            Client::Databricks(c) => c.submit_job(var_source, request),
+        }.await
+    }
+
+    /**
+     * Get job status
+     */
+    async fn get_job_status(&self, job_id: JobId) -> Result<JobStatus, crate::Error> {
+        match self {
+            Client::AzureSynapse(c) => c.get_job_status(job_id),
+            Client::Databricks(c) => c.get_job_status(job_id),
+        }.await
+    }
+
+    /**
+     * Get job driver log
+     */
+    async fn get_job_log(&self, job_id: JobId) -> Result<String, crate::Error> {
+        match self {
+            Client::AzureSynapse(c) => c.get_job_log(job_id),
+            Client::Databricks(c) => c.get_job_log(job_id),
+        }.await
+    }
+
+    /**
+     * Get job output URL in Spark compatible format
+     */
+    async fn get_job_output_url(&self, job_id: JobId) -> Result<Option<String>, crate::Error> {
+        match self {
+            Client::AzureSynapse(c) => c.get_job_output_url(job_id),
+            Client::Databricks(c) => c.get_job_output_url(job_id),
+        }.await
+    }
+
+    /**
+     * Construct remote URL for the filename
+     */
+    fn get_remote_url(&self, filename: &str) -> String {
+        match self {
+            Client::AzureSynapse(c) => c.get_remote_url(filename),
+            Client::Databricks(c) => c.get_remote_url(filename),
+        }
+    }
+
+    /**
+     * Check if the URL is on the storage
+     */
+    fn is_url_on_storage(&self, url: &str) -> bool {
+        match self {
+            Client::AzureSynapse(c) => c.is_url_on_storage(url),
+            Client::Databricks(c) => c.is_url_on_storage(url),
+        }
+    }
+}
+
+impl Client {
+    pub async fn from_config<T>(conf_file: T) -> Result<Client, Error>
+    where
+        T: AsRef<Path>,
+    {
+        let var_source = load_var_source(conf_file);
+        Self::from_var_source(var_source).await
+    }
+
+    pub async fn from_var_source(var_source: Arc<dyn VarSource + Send + Sync>) -> Result<Client, Error>
+    {
+        let provider = var_source
+            .get_environment_variable(&["spark_config", "spark_cluster"])
+            .await?
+            .to_lowercase();
+        let client = match provider.as_str() {
+            "azure_synapse" => Client::AzureSynapse(Arc::new(
+                AzureSynapseClient::from_var_source(var_source).await?,
+            )),
+            "databricks" => Client::Databricks(Arc::new(
+                DatabricksClient::from_var_source(var_source).await?,
+            )),
+            _ => {
+                return Err(Error::UnsupportedSparkProvider(provider));
+            }
+        };
+        Ok(client)
+    }
+}
+

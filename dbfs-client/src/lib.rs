@@ -88,7 +88,7 @@ pub enum DbfsError {
     #[error(transparent)]
     ReqwestError(#[from] reqwest::Error),
 
-    #[error("")]
+    #[error("HTTP Error, URL: '{0}', Status: {1}, Response: '{2}' ")]
     HttpError(String, String, String),
 
     #[error(transparent)]

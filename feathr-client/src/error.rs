@@ -47,6 +47,15 @@ pub enum Error {
     #[error(transparent)]
     AzureStorageError(#[from] azure_storage::Error),
 
+    #[error(transparent)]
+    DbfsError(#[from] dbfs_client::DbfsError),
+
+    #[error("Databricks API Error, Code={0}, Message='{1}'")]
+    DatabricksApiError(String, String),
+
+    #[error("HTTP Error, URL: '{0}', Status: {1}, Response: '{2}' ")]
+    DatabricksHttpError(String, String, String),
+
     #[error("Invalid Url {0}")]
     InvalidUrl(String),
 
@@ -76,6 +85,9 @@ pub enum Error {
 
     #[error("Invalid Time Range {0} - {1}")]
     InvalidTimeRange(DateTime<Utc>, DateTime<Utc>),
+
+    #[error("Unsupported Spark provider '{0}'")]
+    UnsupportedSparkProvider(String),
 }
 
 impl<Guard> From<PoisonError<Guard>> for Error {
