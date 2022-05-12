@@ -10,10 +10,11 @@ use log::debug;
 use reqwest::Url;
 use serde::Serialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use uuid::Uuid;
 
 use crate::{
-    load_var_source, DateTimeResolution, Error, MaterializationSettingsBuilder,
-    OutputSink, VarSource,
+    load_var_source, DateTimeResolution, Error, MaterializationSettingsBuilder, OutputSink,
+    VarSource,
 };
 
 pub use azure_synapse::AzureSynapseClient;
@@ -27,12 +28,14 @@ pub(crate) const GEN_JOB_MAIN_CLASS_NAME: &str = "com.linkedin.feathr.offline.jo
 
 #[derive(Clone, Debug, Default)]
 pub struct SubmitJobRequest {
+    pub job_key: Uuid,
     pub name: String,
     pub job_config_file_name: String,
     pub input: String,
     pub output: String,
     pub main_jar_path: String,
     pub main_class_name: String,
+    pub main_python_script: Option<String>,
     pub feature_config: String,
     pub join_job_config: String,
     pub gen_job_config: String,
@@ -259,7 +262,8 @@ where
             self.get_snowflake_config(var_source.clone()).await?,
         ];
 
-        let feature_config_url = self.get_remote_url(&format!("{}_features.conf", request.name));
+        let feature_config_url =
+            self.get_remote_url(&format!("features_{}_{}.conf", request.name, request.job_key));
         let feature_config_url = self
             .write_remote_file(&feature_config_url, &request.feature_config.as_bytes())
             .await?;
@@ -546,6 +550,7 @@ pub struct SubmitJoiningJobRequestBuilder {
     input_path: String,
     main_jar_path: Option<String>,
     main_class_name: Option<String>,
+    main_python_script: Option<String>,
     output_path: Option<String>,
     python_files: Vec<String>,
     reference_files: Vec<String>,
@@ -568,6 +573,7 @@ impl SubmitJoiningJobRequestBuilder {
             input_path,
             main_jar_path: None,
             main_class_name: None,
+            main_python_script: None,
             output_path: None,
             python_files: Default::default(),
             reference_files: Default::default(),
@@ -576,6 +582,14 @@ impl SubmitJoiningJobRequestBuilder {
             feature_join_config: job_config,
             secret_keys: secret_keys,
         }
+    }
+
+    /**
+     * Set main Python script content for this job
+     */
+    pub fn python_script(&mut self, code: &str) -> &mut Self {
+        self.main_python_script = Some(code.to_string());
+        self
     }
 
     /**
@@ -594,19 +608,19 @@ impl SubmitJoiningJobRequestBuilder {
         let job_tags: HashMap<String, String> = [(OUTPUT_PATH_TAG.to_string(), output.clone())]
             .into_iter()
             .collect();
+        let job_key = Uuid::new_v4();
         SubmitJobRequest {
+            job_key,
             name: self.job_name.to_owned(),
-            job_config_file_name: format!("{}.conf", self.job_name),
+            job_config_file_name: format!("feathr_join_config_{}_{}.conf", self.job_name, job_key),
             input: self.input_path.to_owned(),
             output,
-            main_jar_path: self
-                .main_jar_path
-                .to_owned()
-                .unwrap_or_default(),
+            main_jar_path: self.main_jar_path.to_owned().unwrap_or_default(),
             main_class_name: self
                 .main_class_name
                 .to_owned()
                 .unwrap_or_else(|| JOIN_JOB_MAIN_CLASS_NAME.to_string()),
+            main_python_script: self.main_python_script.clone(),
             feature_config: self.feature_config.to_owned(),
             join_job_config: self.feature_join_config.to_owned(),
             gen_job_config: Default::default(),
@@ -624,6 +638,7 @@ pub struct SubmitGenerationJobRequestBuilder {
     input_path: String,
     main_jar_path: Option<String>,
     main_class_name: Option<String>,
+    main_python_script: Option<String>,
     python_files: Vec<String>,
     reference_files: Vec<String>,
     configuration: HashMap<String, String>,
@@ -651,11 +666,12 @@ impl SubmitGenerationJobRequestBuilder {
             input_path,
             main_jar_path: None,
             main_class_name: None,
+            main_python_script: None,
             python_files: Default::default(),
             reference_files: Default::default(),
             configuration: Default::default(),
             feature_config,
-            secret_keys: secret_keys,
+            secret_keys,
             start,
             end,
             step,
@@ -702,21 +718,32 @@ impl SubmitGenerationJobRequestBuilder {
     }
 
     /**
+     * Set main Python script content for this job
+     */
+    pub fn python_script(&mut self, code: &str) -> &mut Self {
+        self.main_python_script = Some(code.to_string());
+        self
+    }
+
+    /**
      * Create Spark job request
      */
     pub fn build(&self) -> Result<Vec<SubmitJobRequest>, Error> {
         let mat_settings = self
             .materialization_builder
             .build(self.start, self.end, self.step)?;
+        let job_key = Uuid::new_v4();
         Ok(mat_settings
             .into_iter()
             .map(|s| {
                 let conf = serde_json::to_string_pretty(&s).unwrap();
                 SubmitJobRequest {
+                    job_key,
                     name: self.job_name.to_owned(),
                     job_config_file_name: format!(
-                        "{}_{}.conf",
+                        "feathr_gen_conf_{}_{}_{}.conf",
                         self.job_name,
+                        job_key,
                         s.operational.end_time.timestamp_millis()
                     ),
                     input: self.input_path.to_owned(),
@@ -729,6 +756,7 @@ impl SubmitGenerationJobRequestBuilder {
                         .main_class_name
                         .to_owned()
                         .unwrap_or_else(|| GEN_JOB_MAIN_CLASS_NAME.to_string()),
+                    main_python_script: self.main_python_script.clone(),
                     feature_config: self.feature_config.to_owned(),
                     join_job_config: Default::default(),
                     gen_job_config: conf,
@@ -757,7 +785,8 @@ impl JobClient for Client {
         match self {
             Client::AzureSynapse(c) => c.write_remote_file(path, content),
             Client::Databricks(c) => c.write_remote_file(path, content),
-        }.await
+        }
+        .await
     }
 
     /**
@@ -767,7 +796,8 @@ impl JobClient for Client {
         match self {
             Client::AzureSynapse(c) => c.read_remote_file(path),
             Client::Databricks(c) => c.read_remote_file(path),
-        }.await
+        }
+        .await
     }
 
     /**
@@ -781,7 +811,8 @@ impl JobClient for Client {
         match self {
             Client::AzureSynapse(c) => c.submit_job(var_source, request),
             Client::Databricks(c) => c.submit_job(var_source, request),
-        }.await
+        }
+        .await
     }
 
     /**
@@ -791,7 +822,8 @@ impl JobClient for Client {
         match self {
             Client::AzureSynapse(c) => c.get_job_status(job_id),
             Client::Databricks(c) => c.get_job_status(job_id),
-        }.await
+        }
+        .await
     }
 
     /**
@@ -801,7 +833,8 @@ impl JobClient for Client {
         match self {
             Client::AzureSynapse(c) => c.get_job_log(job_id),
             Client::Databricks(c) => c.get_job_log(job_id),
-        }.await
+        }
+        .await
     }
 
     /**
@@ -811,7 +844,8 @@ impl JobClient for Client {
         match self {
             Client::AzureSynapse(c) => c.get_job_output_url(job_id),
             Client::Databricks(c) => c.get_job_output_url(job_id),
-        }.await
+        }
+        .await
     }
 
     /**
@@ -844,8 +878,9 @@ impl Client {
         Self::from_var_source(var_source).await
     }
 
-    pub async fn from_var_source(var_source: Arc<dyn VarSource + Send + Sync>) -> Result<Client, Error>
-    {
+    pub async fn from_var_source(
+        var_source: Arc<dyn VarSource + Send + Sync>,
+    ) -> Result<Client, Error> {
         let provider = var_source
             .get_environment_variable(&["spark_config", "spark_cluster"])
             .await?
@@ -864,4 +899,3 @@ impl Client {
         Ok(client)
     }
 }
-

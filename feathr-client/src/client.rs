@@ -62,6 +62,10 @@ impl FeathrClient {
     pub async fn get_job_status(&self, job_id: JobId) -> Result<JobStatus, Error> {
         self.job_client.get_job_status(job_id).await
     }
+
+    pub fn get_remote_url(&self, path: &str) -> String {
+        self.job_client.get_remote_url(path)
+    }
 }
 
 #[cfg(test)]
@@ -250,7 +254,8 @@ mod tests {
         println!("features.conf:\n{}", proj.get_feature_config().unwrap());
 
         // let output = "abfss://xchfeathrtest4fs@xchfeathrtest4sto.dfs.core.windows.net/output.bin";
-        let output = "dbfs:/test.bin";
+        // let output = "dbfs:/test.bin";
+        let output = client.get_remote_url("output.bin");
         let anchor_query = FeatureQuery::new(
             &[
                 &f_trip_distance,
@@ -270,14 +275,14 @@ mod tests {
 
         println!(
             "features_join.conf:\n{}",
-            proj.get_feature_join_config(&ob, &[&anchor_query, &derived_query], output)
+            proj.get_feature_join_config(&ob, &[&anchor_query, &derived_query], &output)
                 .unwrap()
         );
 
         let req = proj
-            .feature_join_job(&ob, &[&anchor_query, &derived_query], output)
+            .feature_join_job(&ob, &[&anchor_query, &derived_query], &output)
             .unwrap()
-            .output_path(output)
+            .output_path(&output)
             .build();
 
         println!("Request: {:#?}", req);

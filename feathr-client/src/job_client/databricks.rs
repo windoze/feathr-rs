@@ -46,10 +46,16 @@ pub struct DatabricksClient {
     dbfs: DbfsClient,
     client: reqwest::Client,
     workspace_dir: String,
+    cluster: NewCluster,
 }
 
 impl DatabricksClient {
-    pub fn new(url_base: &str, token: &str, workspace_dir: &str) -> Self {
+    pub fn new(
+        url_base: &str,
+        token: &str,
+        workspace_dir: &str,
+        cluster: Option<NewCluster>,
+    ) -> Self {
         let mut headers = reqwest::header::HeaderMap::new();
         if !token.is_empty() {
             headers.insert(
@@ -65,6 +71,13 @@ impl DatabricksClient {
                 .build()
                 .unwrap(),
             workspace_dir: workspace_dir.to_string(),
+            cluster: cluster.unwrap_or(NewCluster {
+                num_workers: 2,
+                spark_version: "9.1.x-scala2.12".to_string(),
+                node_type_id: "Standard_D4_v2".to_string(),
+                spark_conf: Default::default(),
+                custom_tags: Default::default(),
+            }),
         }
     }
 
@@ -73,7 +86,6 @@ impl DatabricksClient {
         id: u64,
     ) -> Result<(JobStatus, String, Option<HashMap<String, String>>), Error> {
         let url = format!("{}/jobs/runs/get-output?run_id={}", self.url_base, id);
-        debug!("URL: {}", url);
         let resp: GetRunOutputResponse = self
             .client
             .get(url)
@@ -103,11 +115,15 @@ impl DatabricksClient {
                     .unwrap_or_default(),
             ]
             .join(""),
-            resp.metadata.cluster_spec.new_cluster.custom_tags.to_owned(),
+            resp.metadata
+                .cluster_spec
+                .new_cluster
+                .custom_tags
+                .to_owned(),
         ))
     }
 
-    pub async fn from_var_source(
+    pub(crate) async fn from_var_source(
         var_source: Arc<dyn VarSource + Send + Sync>,
     ) -> Result<Self, crate::Error> {
         let workspace_dir = var_source
@@ -128,7 +144,17 @@ impl DatabricksClient {
             .get_environment_variable(&["DATABRICKS_WORKSPACE_TOKEN_VALUE"])
             .await?;
 
-        Ok(Self::new(&url_base, &token, &workspace_dir))
+        let value: serde_yaml::Value = serde_yaml::from_str(
+            &var_source
+                .get_environment_variable(&["spark_config", "databricks", "config_template", "new_cluster"])
+                .await?,
+        )?;
+
+        debug!("{:#?}", value);
+
+        let nc = serde_yaml::from_value::<NewCluster>(value.to_owned()).unwrap();
+
+        Ok(Self::new(&url_base, &token, &workspace_dir, Some(nc)))
     }
 }
 
@@ -168,7 +194,7 @@ struct RunMetadata {
 
 #[derive(Clone, Debug, Deserialize)]
 struct ClusterSpec {
-    new_cluster: NewCluster
+    new_cluster: NewCluster,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -195,13 +221,13 @@ struct SubmitRunSettings {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-struct NewCluster {
-    num_workers: u32,
-    spark_version: String,
-    node_type_id: String,
-    spark_conf: HashMap<String, String>,
+pub struct NewCluster {
+    pub num_workers: u32,
+    pub spark_version: String,
+    pub node_type_id: String,
+    pub spark_conf: HashMap<String, String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    custom_tags: Option<HashMap<String, String>>,
+    pub custom_tags: Option<HashMap<String, String>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -293,46 +319,52 @@ impl JobClient for DatabricksClient {
         let py_files = self.multi_upload_or_get_url(&request.python_files).await?;
         debug!("Python files uploaded, URLs: {:#?}", py_files);
 
-        let task = if py_files.is_empty() {
-            debug!("Main class name: {}", request.main_class_name);
-            SparkTask::SparkJarTask {
-                main_class_name: request.main_class_name,
+        let task = if let Some(code) = request.main_python_script {
+            let py_url = self
+                .write_remote_file(
+                    &format!("feathr_pyspark_driver_{}_{}.py", request.name, request.job_key),
+                    code.as_bytes(),
+                )
+                .await?;
+            debug!("Main executable file: {}", py_url);
+            SparkTask::SparkPythonTask {
+                python_file: py_url,
                 parameters: args,
             }
         } else {
-            debug!("Main executable file: {}", py_files[0]);
-            SparkTask::SparkPythonTask {
-                python_file: py_files[0].clone(),
+            debug!("Main class name: {}", request.main_class_name);
+            SparkTask::SparkJarTask {
+                main_class_name: request.main_class_name,
                 parameters: args,
             }
         };
 
         let libraries: Vec<Library> = jars.into_iter().map(|jar| Library::Jar(jar)).collect();
 
+        let mut new_cluster = self.cluster.clone();
+        new_cluster.custom_tags = if request.output.is_empty() {
+            None
+        } else {
+            let tags: HashMap<String, String> =
+                [("output".to_string(), request.output)]
+                    .into_iter()
+                    .collect();
+            Some(tags)
+        };
+
         let job = SubmitRunRequest {
             tasks: vec![SubmitRunSettings {
-                task_key: uuid::Uuid::new_v4().to_string(),
-                new_cluster: NewCluster {
-                    num_workers: 2,
-                    spark_version: "9.1.x-scala2.12".to_string(),
-                    node_type_id: "Standard_D4_v2".to_string(),
-                    spark_conf: Default::default(),
-                    custom_tags: if request.output.is_empty() {
-                        None
-                    } else {
-                        let tags: HashMap<String, String> =
-                            [("output".to_string(), request.output)]
-                                .into_iter()
-                                .collect();
-                        Some(tags)
-                    },
-                },
+                task_key: request.job_key.to_string(),
+                new_cluster,
                 task,
                 libraries,
             }],
             run_name: request.name,
         };
-        debug!("Job request: {}", serde_json::to_string_pretty(&job).unwrap());
+        debug!(
+            "Job request: {}",
+            serde_json::to_string_pretty(&job).unwrap()
+        );
 
         let url = format!("{}/jobs/runs/submit", self.url_base);
         debug!("URL: {}", url);

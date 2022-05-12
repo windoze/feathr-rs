@@ -49,7 +49,7 @@ impl AzureSynapseClient {
         })
     }
 
-    pub async fn from_var_source(
+    pub(crate) async fn from_var_source(
         var_source: Arc<dyn VarSource + Send + Sync>,
     ) -> Result<Self, crate::Error> {
         let (container, storage_account, workspace_dir) = parse_abfs(
@@ -178,11 +178,16 @@ impl JobClient for AzureSynapseClient {
         let py_files = self.multi_upload_or_get_url(&request.python_files).await?;
         debug!("Python files uploaded, URLs: {:#?}", py_files);
 
-        let executable = if py_files.is_empty() {
-            jars[0].clone()
+        let executable = if let Some(code) = request.main_python_script {
+            self.write_remote_file(
+                &format!("feathr_pyspark_driver_{}_{}.py", request.name, request.job_key),
+                code.as_bytes(),
+            )
+            .await?
         } else {
-            py_files[0].clone()
+            jars[0].clone()
         };
+
         debug!("Main executable file: {}", executable);
 
         let job = SparkRequest {

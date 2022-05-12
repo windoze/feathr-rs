@@ -55,13 +55,10 @@ impl YamlSource {
         T: AsRef<str> + Debug,
     {
         if name.is_empty() {
-            // Recursion ends
-            return Ok(node
-                .as_str()
-                .ok_or_else(|| {
-                    crate::Error::InvalidConfig("Current node is not a string".to_string())
-                })?
-                .to_string());
+            return Ok(match node {
+                serde_yaml::Value::String(s) => s.to_string(),
+                _ => serde_yaml::to_string(node).unwrap(),
+            });
         }
 
         let key = serde_yaml::Value::String(name[0].as_ref().to_string());
