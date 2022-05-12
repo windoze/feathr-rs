@@ -21,8 +21,6 @@ pub use azure_synapse::AzureSynapseClient;
 pub use databricks::DatabricksClient;
 
 pub(crate) const OUTPUT_PATH_TAG: &str = "output_path";
-pub(crate) const FEATHR_JOB_JAR_PATH: &str =
-    "wasbs://public@xchfeathrtest4sto.blob.core.windows.net/feathr-assembly-0.4.0.jar";
 pub(crate) const JOIN_JOB_MAIN_CLASS_NAME: &str = "com.linkedin.feathr.offline.job.FeatureJoinJob";
 pub(crate) const GEN_JOB_MAIN_CLASS_NAME: &str = "com.linkedin.feathr.offline.job.FeatureGenJob";
 
@@ -748,10 +746,7 @@ impl SubmitGenerationJobRequestBuilder {
                     ),
                     input: self.input_path.to_owned(),
                     output: Default::default(),
-                    main_jar_path: self
-                        .main_jar_path
-                        .to_owned()
-                        .unwrap_or_else(|| FEATHR_JOB_JAR_PATH.to_string()),
+                    main_jar_path: self.main_jar_path.to_owned().unwrap_or_default(),
                     main_class_name: self
                         .main_class_name
                         .to_owned()
