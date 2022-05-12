@@ -173,7 +173,7 @@ where
                 }
             }
             // Check every few seconds
-            tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
         }
         Err(crate::Error::Timeout)
     }
