@@ -15,7 +15,7 @@ mod registry_client;
 mod client;
 
 use log::debug;
-pub use project::{AnchorGroupBuilder, FeathrProject};
+pub use project::{AnchorGroup, AnchorGroupBuilder, FeathrProject};
 pub use error::Error;
 pub use var_source::{VarSource, load_var_source, default_var_source};
 pub use feature::{AnchorFeature, DerivedFeature, Feature};

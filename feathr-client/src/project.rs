@@ -374,6 +374,7 @@ impl Serialize for AnchorGroupImpl {
     }
 }
 
+#[derive(Clone, Debug)]
 pub struct AnchorGroup {
     owner: Arc<RwLock<FeathrProjectImpl>>,
     inner: Arc<RwLock<AnchorGroupImpl>>,
