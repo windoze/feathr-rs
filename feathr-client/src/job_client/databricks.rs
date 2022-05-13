@@ -146,7 +146,12 @@ impl DatabricksClient {
 
         let value: serde_yaml::Value = serde_yaml::from_str(
             &var_source
-                .get_environment_variable(&["spark_config", "databricks", "config_template", "new_cluster"])
+                .get_environment_variable(&[
+                    "spark_config",
+                    "databricks",
+                    "config_template",
+                    "new_cluster",
+                ])
                 .await?,
         )?;
 
@@ -322,7 +327,10 @@ impl JobClient for DatabricksClient {
         let task = if let Some(code) = request.main_python_script {
             let py_url = self
                 .write_remote_file(
-                    &format!("feathr_pyspark_driver_{}_{}.py", request.name, request.job_key),
+                    &self.get_remote_url(&format!(
+                        "feathr_pyspark_driver_{}_{}.py",
+                        request.name, request.job_key.as_simple()
+                    )),
                     code.as_bytes(),
                 )
                 .await?;
@@ -345,16 +353,15 @@ impl JobClient for DatabricksClient {
         new_cluster.custom_tags = if request.output.is_empty() {
             None
         } else {
-            let tags: HashMap<String, String> =
-                [("output".to_string(), request.output)]
-                    .into_iter()
-                    .collect();
+            let tags: HashMap<String, String> = [("output".to_string(), request.output)]
+                .into_iter()
+                .collect();
             Some(tags)
         };
 
         let job = SubmitRunRequest {
             tasks: vec![SubmitRunSettings {
-                task_key: request.job_key.to_string(),
+                task_key: request.job_key.as_simple().to_string(),
                 new_cluster,
                 task,
                 libraries,

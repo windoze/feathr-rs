@@ -130,6 +130,9 @@ impl FeathrProject {
         O: Into<ObservationSettings>,
         Q: Into<FeatureQuery> + Clone,
     {
+        let fq: Vec<FeatureQuery> = feature_query.iter().map(|&q| q.clone().into()).collect();
+        let feature_names: Vec<String> = fq.into_iter().flat_map(|q| q.feature_list.into_iter()).collect();
+
         let ob = observation_settings.into();
         Ok(SubmitJoiningJobRequestBuilder::new_join(
             format!("{}_feathr_feature_join_job", self.inner.read()?.name),
@@ -137,30 +140,45 @@ impl FeathrProject {
             self.get_feature_config()?,
             self.get_feature_join_config(ob, feature_query, output)?,
             self.get_secret_keys()?,
+            self.get_user_functions(&feature_names)?,
         ))
     }
 
     /**
      * Creates the Spark job request for a feature-generation job
      */
-    pub fn feature_gen_job(
+    pub fn feature_gen_job<T>(
         &self,
+        feature_names: &[T],
         start: DateTime<Utc>,
         end: DateTime<Utc>,
         step: DateTimeResolution,
-    ) -> Result<SubmitGenerationJobRequestBuilder, Error> {
+    ) -> Result<SubmitGenerationJobRequestBuilder, Error>
+    where
+        T: ToString,
+    {
+        let feature_names: Vec<String> = feature_names.into_iter().map(|f| f.to_string()).collect();
         Ok(SubmitGenerationJobRequestBuilder::new_gen(
             format!(
                 "{}_feathr_feature_materialization_job",
                 self.inner.read()?.name
             ),
+            &feature_names,
             Default::default(), // TODO:
             self.get_feature_config()?,
             self.get_secret_keys()?,
             start,
             end,
             step,
+            self.get_user_functions(&feature_names)?,
         ))
+    }
+
+    pub(crate) fn get_user_functions(
+        &self,
+        feature_names: &[String],
+    ) -> Result<HashMap<String, String>, Error> {
+        Ok(self.inner.read()?.get_user_functions(feature_names))
     }
 
     pub(crate) fn get_secret_keys(&self) -> Result<Vec<String>, Error> {
@@ -256,6 +274,31 @@ impl FeathrProjectImpl {
         let ret = Arc::new(s);
         self.sources.insert(name, ret.clone());
         ret
+    }
+
+    fn get_user_functions(&self, feature_names: &[String]) -> HashMap<String, String> {
+        self.anchor_groups
+            .iter()
+            .filter_map(|(_, g)| {
+                g.read().unwrap().source.get_preprocessing().map(|pp| {
+                    let features = g
+                        .read()
+                        .unwrap()
+                        .anchors
+                        .iter()
+                        .filter_map(|(name, _)| {
+                            if feature_names.contains(name) {
+                                Some(name.to_owned())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<String>>()
+                        .join(",");
+                    (features, pp)
+                })
+            })
+            .collect()
     }
 
     fn get_secret_keys(&self) -> Vec<String> {

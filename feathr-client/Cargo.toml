@@ -28,6 +28,8 @@ azure_storage_datalake = "0.1.1"
 azure_security_keyvault = "0.1"
 livy-client = { path = "../livy-client", features = ["default"] }
 dbfs-client = { path = "../dbfs-client" }
+handlebars = "4"
+base64 = "0.13"
 
 [dev-dependencies]
 dotenv = "0.15"

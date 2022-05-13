@@ -1,11 +1,12 @@
 mod azure_synapse;
 mod databricks;
 
-use std::{collections::HashMap, path::Path, sync::Arc, time::Instant};
+use std::{collections::HashMap, fs::File, io::Read, path::Path, sync::Arc, time::Instant};
 
 use async_trait::async_trait;
 use bytes::Bytes;
 use chrono::{DateTime, Duration, Utc};
+use handlebars::Handlebars;
 use log::debug;
 use reqwest::Url;
 use serde::Serialize;
@@ -23,6 +24,7 @@ pub use databricks::DatabricksClient;
 pub(crate) const OUTPUT_PATH_TAG: &str = "output_path";
 pub(crate) const JOIN_JOB_MAIN_CLASS_NAME: &str = "com.linkedin.feathr.offline.job.FeatureJoinJob";
 pub(crate) const GEN_JOB_MAIN_CLASS_NAME: &str = "com.linkedin.feathr.offline.job.FeatureGenJob";
+const PYTHON_TEMPLATE: &str = include_str!("../../template/feathr_pyspark_driver_template.py.hbr");
 
 #[derive(Clone, Debug, Default)]
 pub struct SubmitJobRequest {
@@ -260,8 +262,10 @@ where
             self.get_snowflake_config(var_source.clone()).await?,
         ];
 
-        let feature_config_url =
-            self.get_remote_url(&format!("features_{}_{}.conf", request.name, request.job_key));
+        let feature_config_url = self.get_remote_url(&format!(
+            "features_{}_{}.conf",
+            request.name, request.job_key.as_simple()
+        ));
         let feature_config_url = self
             .write_remote_file(&feature_config_url, &request.feature_config.as_bytes())
             .await?;
@@ -548,7 +552,6 @@ pub struct SubmitJoiningJobRequestBuilder {
     input_path: String,
     main_jar_path: Option<String>,
     main_class_name: Option<String>,
-    main_python_script: Option<String>,
     output_path: Option<String>,
     python_files: Vec<String>,
     reference_files: Vec<String>,
@@ -556,6 +559,7 @@ pub struct SubmitJoiningJobRequestBuilder {
     feature_config: String,
     feature_join_config: String,
     secret_keys: Vec<String>,
+    user_functions: HashMap<String, String>,
 }
 
 impl SubmitJoiningJobRequestBuilder {
@@ -565,13 +569,13 @@ impl SubmitJoiningJobRequestBuilder {
         feature_config: String,
         job_config: String, // feature_join_config or feature_gen_config
         secret_keys: Vec<String>,
+        user_functions: HashMap<String, String>,
     ) -> Self {
         Self {
             job_name,
             input_path,
             main_jar_path: None,
             main_class_name: None,
-            main_python_script: None,
             output_path: None,
             python_files: Default::default(),
             reference_files: Default::default(),
@@ -579,14 +583,18 @@ impl SubmitJoiningJobRequestBuilder {
             feature_config,
             feature_join_config: job_config,
             secret_keys: secret_keys,
+            user_functions: user_functions,
         }
     }
 
     /**
      * Set main Python script content for this job
      */
-    pub fn python_script(&mut self, code: &str) -> &mut Self {
-        self.main_python_script = Some(code.to_string());
+    pub fn python_file(&mut self, path: &str) -> &mut Self {
+        // TODO:
+        // 1. base64 encode the file
+        // 2. update `embeds` and `imports`
+        self.python_files.push(path.to_string());
         self
     }
 
@@ -610,7 +618,7 @@ impl SubmitJoiningJobRequestBuilder {
         SubmitJobRequest {
             job_key,
             name: self.job_name.to_owned(),
-            job_config_file_name: format!("feathr_join_config_{}_{}.conf", self.job_name, job_key),
+            job_config_file_name: format!("feathr_join_config_{}_{}.conf", self.job_name, job_key.as_simple()),
             input: self.input_path.to_owned(),
             output,
             main_jar_path: self.main_jar_path.to_owned().unwrap_or_default(),
@@ -618,7 +626,7 @@ impl SubmitJoiningJobRequestBuilder {
                 .main_class_name
                 .to_owned()
                 .unwrap_or_else(|| JOIN_JOB_MAIN_CLASS_NAME.to_string()),
-            main_python_script: self.main_python_script.clone(),
+            main_python_script: gen_main_python(&self.user_functions, &self.python_files),
             feature_config: self.feature_config.to_owned(),
             join_job_config: self.feature_join_config.to_owned(),
             gen_job_config: Default::default(),
@@ -636,7 +644,6 @@ pub struct SubmitGenerationJobRequestBuilder {
     input_path: String,
     main_jar_path: Option<String>,
     main_class_name: Option<String>,
-    main_python_script: Option<String>,
     python_files: Vec<String>,
     reference_files: Vec<String>,
     configuration: HashMap<String, String>,
@@ -647,24 +654,27 @@ pub struct SubmitGenerationJobRequestBuilder {
     end: DateTime<Utc>,
     step: DateTimeResolution,
     materialization_builder: MaterializationSettingsBuilder,
+
+    user_functions: HashMap<String, String>,
 }
 
 impl SubmitGenerationJobRequestBuilder {
     pub(crate) fn new_gen(
         job_name: String,
+        feature_names: &[String],
         input_path: String,
         feature_config: String,
         secret_keys: Vec<String>,
         start: DateTime<Utc>,
         end: DateTime<Utc>,
         step: DateTimeResolution,
+        user_functions: HashMap<String, String>,
     ) -> Self {
         Self {
             job_name: job_name.clone(),
             input_path,
             main_jar_path: None,
             main_class_name: None,
-            main_python_script: None,
             python_files: Default::default(),
             reference_files: Default::default(),
             configuration: Default::default(),
@@ -673,7 +683,8 @@ impl SubmitGenerationJobRequestBuilder {
             start,
             end,
             step,
-            materialization_builder: MaterializationSettingsBuilder::new(&job_name),
+            materialization_builder: MaterializationSettingsBuilder::new(&job_name, feature_names),
+            user_functions,
         }
     }
 
@@ -718,8 +729,8 @@ impl SubmitGenerationJobRequestBuilder {
     /**
      * Set main Python script content for this job
      */
-    pub fn python_script(&mut self, code: &str) -> &mut Self {
-        self.main_python_script = Some(code.to_string());
+    pub fn python_file(&mut self, path: &str) -> &mut Self {
+        self.python_files.push(path.to_string());
         self
     }
 
@@ -741,7 +752,7 @@ impl SubmitGenerationJobRequestBuilder {
                     job_config_file_name: format!(
                         "feathr_gen_conf_{}_{}_{}.conf",
                         self.job_name,
-                        job_key,
+                        job_key.as_simple(),
                         s.operational.end_time.timestamp_millis()
                     ),
                     input: self.input_path.to_owned(),
@@ -751,7 +762,7 @@ impl SubmitGenerationJobRequestBuilder {
                         .main_class_name
                         .to_owned()
                         .unwrap_or_else(|| GEN_JOB_MAIN_CLASS_NAME.to_string()),
-                    main_python_script: self.main_python_script.clone(),
+                    main_python_script: gen_main_python(&self.user_functions, &self.python_files),
                     feature_config: self.feature_config.to_owned(),
                     join_job_config: Default::default(),
                     gen_job_config: conf,
@@ -764,6 +775,76 @@ impl SubmitGenerationJobRequestBuilder {
             })
             .collect())
     }
+}
+
+fn encode_buf(buf: &[u8]) -> String {
+    let v: Vec<String> = base64::encode_config(buf, base64::STANDARD)
+        .as_bytes()
+        .chunks(80)
+        .into_iter()
+        .map(|line| String::from_utf8_lossy(line).to_string())
+        .collect();
+    v.join("\n")
+}
+
+fn gen_main_python(
+    user_functions: &HashMap<String, String>,
+    python_files: &[String],
+) -> Option<String> {
+    if user_functions.is_empty() {
+        return None;
+    }
+
+    let imports: Vec<String> = python_files
+        .into_iter()
+        .map(|f| {
+            Path::new(f)
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string()
+        })
+        .collect();
+
+    let embeds: HashMap<String, String> = python_files
+        .into_iter()
+        .filter_map(|filename| {
+            File::open(filename)
+                .ok()
+                .map(|mut f| {
+                    let mut buf = vec![];
+                    f.read_to_end(&mut buf).ok().map(|_| {
+                        (
+                            Path::new(filename)
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_str()
+                                .unwrap_or_default()
+                                .to_string(),
+                            encode_buf(&buf),
+                        )
+                    })
+                })
+                .flatten()
+        })
+        .filter(|(f, _)| !f.is_empty())
+        .collect();
+
+    #[derive(Serialize)]
+    struct Context<'a, 'b> {
+        user_functions: &'a HashMap<String, String>,
+        imports: &'b [String],
+        embeds: &'b HashMap<String, String>,
+    }
+    let ctx = Context {
+        user_functions,
+        imports: &imports,
+        embeds: &embeds,
+    };
+    let mut hbs = Handlebars::new();
+    hbs.register_escape_fn(handlebars::no_escape);
+    hbs.register_template_string("py", PYTHON_TEMPLATE).unwrap();
+    Some(hbs.render("py", &ctx).unwrap())
 }
 
 pub enum Client {
@@ -892,5 +973,28 @@ impl Client {
             }
         };
         Ok(client)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::gen_main_python;
+
+    #[test]
+    fn test_template() {
+        let user_functions: HashMap<String, String> = [(
+            "f_location_avg_fare,f_location_max_fare".to_string(),
+            "userfunc1".to_string(),
+        )]
+        .into_iter()
+        .collect();
+        let files = vec![
+            "/Users/chenxu/repos/feathr/feathr_project/feathr/constants.py".to_string(),
+            "/Users/chenxu/repos/feathr/feathr_project/feathr/anchor.py".to_string(),
+        ];
+        let s = gen_main_python(&user_functions, &files);
+        println!("{}", s.unwrap());
     }
 }

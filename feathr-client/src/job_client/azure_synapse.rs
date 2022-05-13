@@ -180,7 +180,10 @@ impl JobClient for AzureSynapseClient {
 
         let executable = if let Some(code) = request.main_python_script {
             self.write_remote_file(
-                &format!("feathr_pyspark_driver_{}_{}.py", request.name, request.job_key),
+                &self.get_remote_url(&format!(
+                    "feathr_pyspark_driver_{}_{}.py",
+                    request.name, request.job_key
+                )),
                 code.as_bytes(),
             )
             .await?

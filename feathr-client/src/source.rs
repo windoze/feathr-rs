@@ -79,6 +79,8 @@ pub(crate) struct SourceImpl {
     location: SourceLocation,
     #[serde(skip_serializing_if = "Option::is_none")]
     time_window_parameters: Option<TimeWindowParameters>,
+    #[serde(skip)]
+    preprocessing: Option<String>,
 }
 
 impl SourceImpl {
@@ -88,6 +90,7 @@ impl SourceImpl {
             name: "PASSTHROUGH".to_string(),
             location: SourceLocation::InputContext,
             time_window_parameters: None,
+            preprocessing: None,
         }
     }
 
@@ -120,6 +123,10 @@ impl Source {
         self.inner.get_secret_keys()
     }
 
+    pub fn get_preprocessing(&self) -> Option<String> {
+        self.inner.preprocessing.clone()
+    }
+
     #[allow(non_snake_case)]
     pub fn INPUT_CONTEXT() -> Self {
         Self {
@@ -133,6 +140,7 @@ pub struct HdfsSourceBuilder {
     name: String,
     path: String,
     time_window_parameters: Option<TimeWindowParameters>,
+    preprocessing: Option<String>,
 }
 
 impl HdfsSourceBuilder {
@@ -142,6 +150,7 @@ impl HdfsSourceBuilder {
             name: name.to_string(),
             path: path.to_string(),
             time_window_parameters: None,
+            preprocessing: None,
         }
     }
 
@@ -157,6 +166,11 @@ impl HdfsSourceBuilder {
         self
     }
 
+    pub fn preprocessing(&mut self, preprocessing: &str) -> &mut Self {
+        self.preprocessing = Some(preprocessing.to_string());
+        self
+    }
+
     pub fn build(&self) -> Result<Source, Error> {
         let imp = SourceImpl {
             name: self.name.to_string(),
@@ -164,6 +178,7 @@ impl HdfsSourceBuilder {
                 path: self.path.clone(),
             },
             time_window_parameters: self.time_window_parameters.clone(),
+            preprocessing: self.preprocessing.clone(),
         };
         self.owner.insert_source(imp)
     }
@@ -176,6 +191,7 @@ pub struct JdbcSourceBuilder {
     query: Option<String>,
     auth: Option<JdbcAuth>,
     time_window_parameters: Option<TimeWindowParameters>,
+    preprocessing: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -195,6 +211,7 @@ impl JdbcSourceBuilder {
             query: None,
             auth: None,
             time_window_parameters: None,
+            preprocessing: None,
         }
     }
 
@@ -238,6 +255,11 @@ impl JdbcSourceBuilder {
         self
     }
 
+    pub fn preprocessing(&mut self, preprocessing: &str) -> &mut Self {
+        self.preprocessing = Some(preprocessing.to_string());
+        self
+    }
+
     pub fn build(&self) -> Result<Source, Error> {
         let imp = SourceImpl {
             name: self.name.to_string(),
@@ -248,6 +270,7 @@ impl JdbcSourceBuilder {
                 auth: self.auth.clone().unwrap_or(JdbcAuth::Anonymous),
             },
             time_window_parameters: self.time_window_parameters.clone(),
+            preprocessing: self.preprocessing.clone(),
         };
         self.owner.insert_source(imp)
     }

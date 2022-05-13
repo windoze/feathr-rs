@@ -114,11 +114,11 @@ pub struct MaterializationSettingsBuilder {
 }
 
 impl MaterializationSettingsBuilder {
-    pub fn new(name: &str) -> Self {
+    pub fn new(name: &str, features: &[String]) -> Self {
         Self {
             name: name.to_string(),
             sinks: Default::default(),
-            features: Default::default(),
+            features: features.to_owned(),
         }
     }
 
@@ -136,23 +136,6 @@ impl MaterializationSettingsBuilder {
     {
         self.sinks
             .extend(sinks.into_iter().map(|s| s.to_owned().into()));
-        self
-    }
-
-    pub fn feature<T>(&mut self, feature: T) -> &mut Self
-    where
-        T: ToString,
-    {
-        self.features.push(feature.to_string());
-        self
-    }
-
-    pub fn features<T>(&mut self, features: &[T]) -> &mut Self
-    where
-        T: ToString,
-    {
-        self.features
-            .extend(features.into_iter().map(|f| f.to_string()));
         self
     }
 
@@ -218,10 +201,12 @@ mod tests {
     #[test]
     fn test_build() {
         let now = Utc::now();
-        let b = MaterializationSettingsBuilder::new("some_name")
-            .feature("abc")
-            .feature("def")
-            .features(&["foo", "bar"])
+        let b = MaterializationSettingsBuilder::new("some_name", &[
+            "abc".to_string(),
+            "def".to_string(),
+            "foo".to_string(),
+            "bar".to_string(),
+        ])
             .sink(RedisSink::new("table1"))
             .build(now - Duration::hours(3), now, DateTimeResolution::Hourly)
             .unwrap();

@@ -4,8 +4,8 @@ use chrono::Duration;
 use log::debug;
 
 use crate::{
-    load_var_source, Error, FeathrApiClient, FeathrProject, FeatureRegistry,
-    JobClient, JobId, JobStatus, SubmitJobRequest, VarSource, job_client,
+    job_client, load_var_source, Error, FeathrApiClient, FeathrProject, FeatureRegistry, JobClient,
+    JobId, JobStatus, SubmitJobRequest, VarSource,
 };
 
 pub struct FeathrClient {
@@ -134,11 +134,14 @@ mod tests {
 
         let start = Utc.ymd(2020, 5, 20).and_hms(0, 0, 0);
         let reqs = proj
-            .feature_gen_job(start, start + Duration::days(1), DateTimeResolution::Daily)
+            .feature_gen_job(
+                &[&f_location_avg_fare, &f_location_max_fare],
+                start,
+                start + Duration::days(3),
+                DateTimeResolution::Daily,
+            )
             .unwrap()
             .sink(RedisSink::new("table1"))
-            .feature(&f_location_avg_fare)
-            .feature(&f_location_max_fare)
             .build()
             .unwrap();
         for r in reqs.iter() {
@@ -169,6 +172,7 @@ mod tests {
                 "lpep_dropoff_datetime",
                 "yyyy-MM-dd HH:mm:ss"
             )
+            .preprocessing("testudf.add_new_fare_amount")
             .build()
             .unwrap();
 
@@ -209,7 +213,7 @@ mod tests {
             .description("location id in NYC");
 
         let agg_features = proj
-            .anchor_group("aggregationFeatures", batch_source)
+            .anchor_group("aggregationFeatures", batch_source.clone())
             .build()
             .unwrap();
 
@@ -251,10 +255,25 @@ mod tests {
             .build()
             .unwrap();
 
+        let pickup_time_as_id = TypedKey::new("lpep_pickup_datetime", ValueType::INT32)
+            .full_name("nyc_taxi.pickup_time_as_id")
+            .description("Pick up time");
+
+        let udf_features = proj
+            .anchor_group("udfFeatures", batch_source)
+            .build()
+            .unwrap();
+
+        let fare_amount_new = udf_features
+            .anchor("fare_amount_new", FeatureType::FLOAT)
+            .unwrap()
+            .keys(&[&pickup_time_as_id])
+            .transform("fare_amount_new")
+            .build()
+            .unwrap();
+
         println!("features.conf:\n{}", proj.get_feature_config().unwrap());
 
-        // let output = "abfss://xchfeathrtest4fs@xchfeathrtest4sto.dfs.core.windows.net/output.bin";
-        // let output = "dbfs:/test.bin";
         let output = client.get_remote_url("output.bin");
         let anchor_query = FeatureQuery::new(
             &[
@@ -264,6 +283,7 @@ mod tests {
                 &f_day_of_week,
                 &f_location_avg_fare,
                 &f_location_max_fare,
+                &fare_amount_new,
             ],
             &[&location_id],
         );
@@ -282,6 +302,7 @@ mod tests {
         let req = proj
             .feature_join_job(&ob, &[&anchor_query, &derived_query], &output)
             .unwrap()
+            .python_file("../test-script/testudf.py")
             .output_path(&output)
             .build();
 
