@@ -29,6 +29,7 @@ azure_storage_datalake = { git = "https://github.com/Azure/azure-sdk-for-rust.gi
 azure_security_keyvault = { git = "https://github.com/Azure/azure-sdk-for-rust.git", rev = "4515ed9", default-features = false }
 handlebars = "4"
 base64 = "0.13"
+openssl = { version = "0.10", features = ["vendored"] }
 
 [dev-dependencies]
 dotenv = "0.15"
