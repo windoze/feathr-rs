@@ -1,3 +1,3 @@
 # Rust Feathr Client
 
-A [Feathr](https://github.com/linkedin/feathr) client for Rust, and Python.
+A [Feathr](https://github.com/linkedin/feathr) client for Rust.

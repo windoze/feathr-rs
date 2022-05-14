@@ -19,19 +19,28 @@ tokio-util = { version = "0.7", features = ["codec"] }
 serde = { version = "1", features = ["derive", "rc"], default-features = false }
 serde_json = "1"
 serde_yaml = "0.8"
-reqwest = { version = "0.11", features = ["multipart", "stream", "json"] }
-indexmap = { version = "1", features = ["serde"]}
-oauth2 = "4"
-azure_core = "0.1.1"
-azure_identity = "0.1.1"
-azure_storage = "0.1"
-azure_storage_datalake = "0.1.1"
-azure_security_keyvault = "0.1"
+reqwest = { version = "0.11", features = ["multipart", "stream", "json", "rustls-tls"], default-features = false }
+indexmap = { version = "1", features = ["serde"] }
+oauth2 = { version = "4", features = ["rustls-tls"], default-features = false }
+azure_core = { git = "https://github.com/Azure/azure-sdk-for-rust.git", rev = "4515ed9", default-features = false }
+azure_identity = { git = "https://github.com/Azure/azure-sdk-for-rust.git", rev = "4515ed9", default-features = false }
+azure_storage = { git = "https://github.com/Azure/azure-sdk-for-rust.git", rev = "4515ed9", default-features = false }
+azure_storage_datalake = { git = "https://github.com/Azure/azure-sdk-for-rust.git", rev = "4515ed9", default-features = false }
+azure_security_keyvault = { git = "https://github.com/Azure/azure-sdk-for-rust.git", rev = "4515ed9", default-features = false }
 handlebars = "4"
 base64 = "0.13"
 
 [dev-dependencies]
 dotenv = "0.15"
-tokio = { version = "1", features = ["full"]}
+tokio = { version = "1", features = ["full"] }
 env_logger = "0.9"
 rand = "0.8"
+
+[features]
+default = []
+rustls = [
+    "azure_core/enable_reqwest_rustls",
+    "azure_identity/enable_reqwest_rustls",
+    "azure_storage/enable_reqwest_rustls",
+    "azure_storage_datalake/enable_reqwest_rustls",
+]
