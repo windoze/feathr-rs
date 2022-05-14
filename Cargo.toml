@@ -22,10 +22,10 @@ serde_yaml = "0.8"
 reqwest = { version = "0.11", features = ["multipart", "stream", "json", "rustls-tls"], default-features = false }
 indexmap = { version = "1", features = ["serde"] }
 oauth2 = { version = "4", features = ["rustls-tls"], default-features = false }
-azure_core = { git = "https://github.com/Azure/azure-sdk-for-rust.git", rev = "4515ed9", default-features = false }
-azure_identity = { git = "https://github.com/Azure/azure-sdk-for-rust.git", rev = "4515ed9", default-features = false }
-azure_storage = { git = "https://github.com/Azure/azure-sdk-for-rust.git", rev = "4515ed9", default-features = false }
-azure_storage_datalake = { git = "https://github.com/Azure/azure-sdk-for-rust.git", rev = "4515ed9", default-features = false }
+azure_core = { git = "https://github.com/Azure/azure-sdk-for-rust.git", rev = "4515ed9", features = ["enable_reqwest_rustls"], default-features = false }
+azure_identity = { git = "https://github.com/Azure/azure-sdk-for-rust.git", rev = "4515ed9", features = ["enable_reqwest_rustls"], default-features = false }
+azure_storage = { git = "https://github.com/Azure/azure-sdk-for-rust.git", rev = "4515ed9", features = ["enable_reqwest_rustls"], default-features = false }
+azure_storage_datalake = { git = "https://github.com/Azure/azure-sdk-for-rust.git", rev = "4515ed9", features = ["enable_reqwest_rustls"], default-features = false }
 azure_security_keyvault = { git = "https://github.com/Azure/azure-sdk-for-rust.git", rev = "4515ed9", default-features = false }
 handlebars = "4"
 base64 = "0.13"

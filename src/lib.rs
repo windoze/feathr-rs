@@ -51,3 +51,16 @@ where
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use dotenv;
+    use std::sync::Once;
+
+    static INIT_ENV_LOGGER: Once = Once::new();
+
+    pub fn init_logger() {
+        dotenv::dotenv().ok();
+        INIT_ENV_LOGGER.call_once(|| env_logger::init());
+    }
+}

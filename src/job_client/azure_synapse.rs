@@ -341,17 +341,12 @@ impl Into<JobStatus> for LivyStates {
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
-    use dotenv;
-    use std::sync::Once;
     use tokio::io::AsyncReadExt;
 
     use crate::*;
 
-    static INIT_ENV_LOGGER: Once = Once::new();
-
     fn init() -> AzureSynapseClient {
-        dotenv::dotenv().ok();
-        INIT_ENV_LOGGER.call_once(|| env_logger::init());
+        crate::tests::init_logger();
         AzureSynapseClient::default().unwrap()
     }
 

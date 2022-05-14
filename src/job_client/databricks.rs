@@ -452,20 +452,6 @@ impl JobClient for DatabricksClient {
 
 mod tests {
     use super::*;
-    use dotenv;
-    use std::sync::Once;
-
-    use crate::*;
-
-    static INIT_ENV_LOGGER: Once = Once::new();
-
-    async fn init() -> DatabricksClient {
-        dotenv::dotenv().ok();
-        INIT_ENV_LOGGER.call_once(|| env_logger::init());
-        DatabricksClient::from_var_source(load_var_source("test-script/feathr_config.yaml"))
-            .await
-            .unwrap()
-    }
 
     #[test]
     fn ser_spark_run() {
@@ -491,12 +477,5 @@ mod tests {
             libraries: lib,
         };
         println!("{}", serde_json::to_string_pretty(&x).unwrap());
-    }
-
-    #[tokio::test]
-    async fn get_state() {
-        let client = init().await;
-        let resp = client.get_run_status(166351).await.unwrap();
-        println!("{:#?}", resp);
     }
 }

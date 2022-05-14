@@ -182,21 +182,11 @@ pub fn default_var_source() -> Arc<dyn VarSource> {
 
 #[cfg(test)]
 mod tests {
-    use dotenv;
-    use std::sync::Once;
-
     use super::*;
-
-    static INIT_ENV_LOGGER: Once = Once::new();
-
-    fn init() {
-        dotenv::dotenv().ok();
-        INIT_ENV_LOGGER.call_once(|| env_logger::init());
-    }
 
     #[tokio::test]
     async fn it_works() {
-        init();
+        crate::tests::init_logger();
         let y = YamlSource::load("test-script/feathr_config.yaml").unwrap();
         assert_eq!(
             y.get_environment_variable(&["project_config", "project_name"])

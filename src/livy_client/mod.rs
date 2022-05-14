@@ -401,17 +401,12 @@ impl<T: Authenticator> LivyClient<T> {
 
 #[cfg(test)]
 mod tests {
-    use dotenv;
     use std::env;
-    use std::sync::Once;
 
     use super::*;
 
-    static INIT_ENV_LOGGER: Once = Once::new();
-
     fn init() -> LivyClient<AadAuthenticator> {
-        dotenv::dotenv().ok();
-        INIT_ENV_LOGGER.call_once(|| env_logger::init());
+        crate::tests::init_logger();
         AzureSynapseClientBuilder::default()
             .url(env::var("SYNAPSE_DEV_URL").unwrap())
             .pool(env::var("SYNAPSE_POOL_NAME").unwrap())

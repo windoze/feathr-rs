@@ -606,17 +606,12 @@ fn strip_dbfs_prefix(path: &str) -> Result<&str> {
 
 #[cfg(test)]
 mod tests {
-    use dotenv;
     use rand::Rng;
-    use std::sync::Once;
 
     use super::*;
 
-    static INIT_ENV_LOGGER: Once = Once::new();
-
     fn init() -> DbfsClient {
-        dotenv::dotenv().ok();
-        INIT_ENV_LOGGER.call_once(|| env_logger::init());
+        crate::tests::init_logger();
         DbfsClient::new(
             &std::env::var("SPARK_CONFIG__DATABRICKS__WORKSPACE_INSTANCE_URL").unwrap(),
             &std::env::var("DATABRICKS_WORKSPACE_TOKEN_VALUE").unwrap(),

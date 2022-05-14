@@ -85,18 +85,12 @@ impl FeathrClient {
 #[cfg(test)]
 mod tests {
     use chrono::{Duration, TimeZone, Utc};
-    use dotenv;
-    use std::sync::Once;
-
     use futures::future::join_all;
 
     use crate::*;
 
-    static INIT_ENV_LOGGER: Once = Once::new();
-
     async fn init() -> FeathrClient {
-        dotenv::dotenv().ok();
-        INIT_ENV_LOGGER.call_once(|| env_logger::init());
+        crate::tests::init_logger();
         FeathrClient::load("test-script/feathr_config.yaml")
             .await
             .unwrap()
