@@ -1,7 +1,6 @@
 mod error;
 mod models;
 
-#[cfg(feature = "azure-synapse")]
 mod azure_synapse;
 
 use async_trait::async_trait;
@@ -13,7 +12,6 @@ use std::fmt::Debug;
 pub use error::{LivyClientError, Result};
 pub use models::*;
 
-#[cfg(feature = "azure-synapse")]
 pub use azure_synapse::*;
 
 /// Log if `Result` is an error
@@ -83,7 +81,7 @@ pub trait Authenticator {
     async fn authenticate(
         &self,
         builder: RequestBuilder,
-    ) -> std::result::Result<RequestBuilder, crate::LivyClientError>;
+    ) -> std::result::Result<RequestBuilder, error::LivyClientError>;
 }
 
 /**
@@ -407,7 +405,7 @@ mod tests {
     use std::env;
     use std::sync::Once;
 
-    use crate::*;
+    use super::*;
 
     static INIT_ENV_LOGGER: Once = Once::new();
 

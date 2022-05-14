@@ -17,9 +17,8 @@ pub enum LivyClientError {
     #[error(transparent)]
     SerdeError(#[from] serde_json::Error),
 
-    #[cfg(feature="azure-synapse")]
     #[error(transparent)]
-    AzureSynapseError(#[from] crate::azure_synapse::AzureSynapseError),
+    AzureSynapseError(#[from] super::azure_synapse::AzureSynapseError),
 
     #[error("Job {0} is not in valid state")]
     InvalidJobState(u64)

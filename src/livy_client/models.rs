@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_with::serde_as;
 
 fn is_default<T>(v: &T) -> bool
 where
@@ -200,7 +199,6 @@ impl Default for SparkJobResult {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
-#[serde_as]
 #[serde(rename_all = "camelCase")]
 #[serde(default)]
 pub struct SparkJob {

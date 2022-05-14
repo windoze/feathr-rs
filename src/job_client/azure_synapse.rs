@@ -5,13 +5,16 @@ use azure_identity::token_credentials::DefaultAzureCredential;
 use azure_storage::storage_shared_key_credential::StorageSharedKeyCredential;
 use azure_storage_datalake::clients::{DataLakeClient, PathClient};
 use bytes::Bytes;
-use livy_client::{
-    AadAuthenticator, AzureSynapseClientBuilder, ClusterSize, LivyClient, LivyStates, SparkRequest,
-};
 use log::debug;
 use reqwest::Url;
 
-use crate::{JobClient, JobId, JobStatus, Logged, VarSource};
+use crate::{
+    livy_client::{
+        AadAuthenticator, AzureSynapseClientBuilder, ClusterSize, LivyClient, LivyStates,
+        SparkRequest,
+    },
+    JobClient, JobId, JobStatus, Logged, VarSource,
+};
 
 pub struct AzureSynapseClient {
     livy_client: LivyClient<AadAuthenticator>,
@@ -366,7 +369,7 @@ mod tests {
 
         assert_eq!(
             client
-                .get_file_name("../test-script/pyspark-test.py")
+                .get_file_name("test-script/pyspark-test.py")
                 .unwrap(),
             "pyspark-test.py"
         );
@@ -395,7 +398,7 @@ mod tests {
         let client = init();
         let files = vec![
             String::from("abfss://xchfeathrtest4fs@xchfeathrtest4sto.dfs.core.windows.net/abc"),
-            String::from("../test-script/pyspark-test.py"),
+            String::from("test-script/pyspark-test.py"),
         ];
         let ret = client.multi_upload_or_get_url(&files).await.unwrap();
         assert_eq!(

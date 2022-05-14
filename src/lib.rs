@@ -12,9 +12,13 @@ mod job_config;
 mod utils;
 mod job_client;
 mod registry_client;
+mod dbfs_client;
+mod livy_client;
 mod client;
 
 use log::debug;
+pub use dbfs_client::*;
+pub use livy_client::*;
 pub use project::{AnchorGroup, AnchorGroupBuilder, FeathrProject};
 pub use error::Error;
 pub use var_source::{VarSource, load_var_source, default_var_source};

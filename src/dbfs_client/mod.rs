@@ -610,7 +610,7 @@ mod tests {
     use rand::Rng;
     use std::sync::Once;
 
-    use crate::*;
+    use super::*;
 
     static INIT_ENV_LOGGER: Once = Once::new();
 

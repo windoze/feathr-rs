@@ -9,15 +9,13 @@ use oauth2::AccessToken;
 use reqwest::RequestBuilder;
 use thiserror::Error;
 
-use crate::{Authenticator, LivyClient, LivyClientError, Result};
+use super::{Authenticator, LivyClient, LivyClientError, Result};
 
 #[derive(Debug, Error)]
 pub enum AzureSynapseError {
-    #[cfg(feature = "azure-synapse")]
     #[error("Missing Url")]
     MissingSynapseUrl,
 
-    #[cfg(feature = "azure-synapse")]
     #[error("Missing Pool Name")]
     MissingSynapsePool,
 

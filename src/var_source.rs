@@ -197,7 +197,7 @@ mod tests {
     #[tokio::test]
     async fn it_works() {
         init();
-        let y = YamlSource::load("../test-script/feathr_config.yaml").unwrap();
+        let y = YamlSource::load("test-script/feathr_config.yaml").unwrap();
         assert_eq!(
             y.get_environment_variable(&["project_config", "project_name"])
                 .await

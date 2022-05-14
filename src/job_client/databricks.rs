@@ -2,12 +2,11 @@ use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use dbfs_client::DbfsClient;
 use log::debug;
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 
-use crate::{Error, JobClient, JobId, JobStatus, SubmitJobRequest, VarSource};
+use crate::{dbfs_client::DbfsClient, Error, JobClient, JobId, JobStatus, SubmitJobRequest, VarSource};
 
 #[async_trait]
 trait LoggedResponse {
@@ -463,7 +462,7 @@ mod tests {
     async fn init() -> DatabricksClient {
         dotenv::dotenv().ok();
         INIT_ENV_LOGGER.call_once(|| env_logger::init());
-        DatabricksClient::from_var_source(load_var_source("../test-script/feathr_config.yaml"))
+        DatabricksClient::from_var_source(load_var_source("test-script/feathr_config.yaml"))
             .await
             .unwrap()
     }

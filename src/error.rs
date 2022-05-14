@@ -42,13 +42,13 @@ pub enum Error {
     VarError(#[from] std::env::VarError),
 
     #[error(transparent)]
-    LivyClientError(#[from] livy_client::LivyClientError),
+    LivyClientError(#[from] crate::livy_client::LivyClientError),
 
     #[error(transparent)]
     AzureStorageError(#[from] azure_storage::Error),
 
     #[error(transparent)]
-    DbfsError(#[from] dbfs_client::DbfsError),
+    DbfsError(#[from] crate::dbfs_client::DbfsError),
 
     #[error("Databricks API Error, Code={0}, Message='{1}'")]
     DatabricksApiError(String, String),

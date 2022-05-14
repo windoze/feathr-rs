@@ -97,7 +97,7 @@ mod tests {
     async fn init() -> FeathrClient {
         dotenv::dotenv().ok();
         INIT_ENV_LOGGER.call_once(|| env_logger::init());
-        FeathrClient::load("../test-script/feathr_config.yaml")
+        FeathrClient::load("test-script/feathr_config.yaml")
             .await
             .unwrap()
     }
@@ -316,7 +316,7 @@ mod tests {
         let req = proj
             .feature_join_job(&ob, &[&anchor_query, &derived_query], &output)
             .unwrap()
-            .python_file("../test-script/testudf.py")
+            .python_file("test-script/testudf.py")
             .output_path(&output)
             .build();
 

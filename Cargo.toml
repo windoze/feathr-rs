@@ -1,9 +1,37 @@
-[workspace]
+[package]
+name = "feathr"
+version = "0.1.0"
+edition = "2021"
 
-members = [
-    "feathr-client",
-    "livy-client",
-    "dbfs-client",
-    "feathrs",
-]
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[dependencies]
+log = "0.4"
+thiserror = "1"
+bytes = "1"
+regex = "1"
+chrono = "0.4"
+futures = "0.3"
+uuid = { version = "1", features = ["v4"] }
+async-trait = "0.1.53"
+tokio = { version = "1", default-features = false }
+tokio-util = { version = "0.7", features = ["codec"] }
+serde = { version = "1", features = ["derive", "rc"], default-features = false }
+serde_json = "1"
+serde_yaml = "0.8"
+reqwest = { version = "0.11", features = ["multipart", "stream", "json"] }
+indexmap = { version = "1", features = ["serde"]}
+oauth2 = "4"
+azure_core = "0.1.1"
+azure_identity = "0.1.1"
+azure_storage = "0.1"
+azure_storage_datalake = "0.1.1"
+azure_security_keyvault = "0.1"
+handlebars = "4"
+base64 = "0.13"
+
+[dev-dependencies]
+dotenv = "0.15"
+tokio = { version = "1", features = ["full"]}
+env_logger = "0.9"
+rand = "0.8"
