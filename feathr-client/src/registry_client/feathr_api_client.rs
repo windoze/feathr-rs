@@ -4,6 +4,7 @@ use async_trait::async_trait;
 
 use crate::{FeatureRegistry, FeathrProject, Error, VarSource};
 
+#[derive(Clone)]
 pub struct FeathrApiClient;
 
 impl FeathrApiClient {

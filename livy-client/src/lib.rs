@@ -122,6 +122,7 @@ impl Authenticator for BasicAuthenticator {
 /**
  * Livy API client
  */
+#[derive(Debug)]
 pub struct LivyClient<T: Authenticator> {
     client: reqwest::Client,
     url_base: String,

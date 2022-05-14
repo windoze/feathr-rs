@@ -1,6 +1,7 @@
 use std::{path::Path, sync::Arc};
 
 use chrono::Duration;
+use futures::future::join_all;
 use log::debug;
 
 use crate::{
@@ -8,6 +9,7 @@ use crate::{
     JobId, JobStatus, SubmitJobRequest, VarSource,
 };
 
+#[derive(Clone)]
 pub struct FeathrClient {
     job_client: job_client::Client,
     registry_client: FeathrApiClient,
@@ -57,6 +59,18 @@ impl FeathrClient {
         let status = self.job_client.wait_for_job(job_id, timeout).await?;
         debug!("Job {} completed with status {}", job_id, status);
         self.job_client.get_job_log(job_id).await
+    }
+
+    pub async fn wait_for_jobs(
+        &self,
+        job_ids: Vec<JobId>,
+        timeout: Option<Duration>,
+    ) -> Vec<Result<String, Error>> {
+        let jobs = job_ids
+            .into_iter()
+            .map(|job_id| self.wait_for_job(job_id, timeout));
+        let complete = join_all(jobs).await;
+        complete
     }
 
     pub async fn get_job_status(&self, job_id: JobId) -> Result<JobStatus, Error> {

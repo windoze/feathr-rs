@@ -41,6 +41,7 @@ struct DatabricksErrorResponse {
     pub message: String,
 }
 
+#[derive(Debug)]
 pub struct DatabricksClient {
     url_base: String,
     dbfs: DbfsClient,
