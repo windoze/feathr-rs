@@ -414,6 +414,7 @@ mod tests {
             .unwrap()
     }
 
+    #[ignore]
     #[tokio::test]
     async fn get_sessions() {
         let client = init();
@@ -421,6 +422,7 @@ mod tests {
         println!("{:#?}", sessions);
     }
 
+    #[ignore]
     #[tokio::test]
     async fn create_session() {
         let client = init();
@@ -439,6 +441,7 @@ mod tests {
         println!("{:#?}", result);
     }
 
+    #[ignore]
     #[tokio::test]
     async fn get_jobs() {
         let client = init();
@@ -446,6 +449,7 @@ mod tests {
         println!("{:#?}", jobs);
     }
 
+    #[ignore]
     #[tokio::test]
     async fn get_driver_log() {
         let client = init();
@@ -456,6 +460,7 @@ mod tests {
         println!("StdOut:\n{}", stdout);
     }
 
+    #[ignore]
     #[tokio::test]
     async fn create_job() {
         let client = init();
