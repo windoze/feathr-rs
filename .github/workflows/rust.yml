@@ -15,6 +15,23 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+    - env:
+        AZURE_CLIENT_ID: ${{secrets.AZURE_CLIENT_ID}}
+        AZURE_TENANT_ID: ${{secrets.AZURE_TENANT_ID}}
+        AZURE_CLIENT_SECRET: ${{secrets.AZURE_CLIENT_SECRET}}
+        SYNAPSE_DEV_URL: ${{secrets.SYNAPSE_DEV_URL}}
+        SYNAPSE_POOL_NAME: ${{secrets.SYNAPSE_POOL_NAME}}
+        SYNAPSE_WORKSPACE_DIR: ${{secrets.SYNAPSE_WORKSPACE_DIR}}
+        REDIS_PASSWORD: ${{secrets.REDIS_PASSWORD}}
+        REDIS_HOST: ${{secrets.REDIS_HOST}}
+        FEATHR_RUNTIME_LOCATION: ${{secrets.FEATHR_RUNTIME_LOCATION}}
+        AZURE_PURVIEW_NAME: ${{secrets.AZURE_PURVIEW_NAME}}
+        ADLS_ACCOUNT: ${{secrets.ADLS_ACCOUNT}}
+        ADLS_KEY: ${{secrets.ADLS_KEY}}
+        BLOB_ACCOUNT: ${{secrets.BLOB_ACCOUNT}}
+        BLOB_KEY: ${{secrets.BLOB_KEY}}
+        SPARK_CONFIG__DATABRICKS__WORKSPACE_INSTANCE_URL: ${{secrets.SPARK_CONFIG__DATABRICKS__WORKSPACE_INSTANCE_URL}}
+        DATABRICKS_WORKSPACE_TOKEN_VALUE: ${{secrets.DATABRICKS_WORKSPACE_TOKEN_VALUE}}
     - uses: actions/checkout@v3
     - name: Build
       run: cargo build --verbose
