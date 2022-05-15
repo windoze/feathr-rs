@@ -15,7 +15,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - env:
+    - uses: actions/checkout@v3
+    - name: Build
+      run: cargo build --verbose
+    - name: Run tests
+      env:
         AZURE_CLIENT_ID: ${{secrets.AZURE_CLIENT_ID}}
         AZURE_TENANT_ID: ${{secrets.AZURE_TENANT_ID}}
         AZURE_CLIENT_SECRET: ${{secrets.AZURE_CLIENT_SECRET}}
@@ -32,8 +36,4 @@ jobs:
         BLOB_KEY: ${{secrets.BLOB_KEY}}
         SPARK_CONFIG__DATABRICKS__WORKSPACE_INSTANCE_URL: ${{secrets.SPARK_CONFIG__DATABRICKS__WORKSPACE_INSTANCE_URL}}
         DATABRICKS_WORKSPACE_TOKEN_VALUE: ${{secrets.DATABRICKS_WORKSPACE_TOKEN_VALUE}}
-    - uses: actions/checkout@v3
-    - name: Build
-      run: cargo build --verbose
-    - name: Run tests
       run: cargo test --verbose
