@@ -6,7 +6,7 @@ use log::debug;
 
 use crate::{
     job_client, load_var_source, Error, FeathrApiClient, FeathrProject, FeatureRegistry, JobClient,
-    JobId, JobStatus, SubmitJobRequest, VarSource,
+    JobId, JobStatus, SubmitJobRequest, VarSource, new_var_source,
 };
 
 #[derive(Clone)]
@@ -22,6 +22,18 @@ impl FeathrClient {
         T: AsRef<Path>,
     {
         let var_source = load_var_source(conf_file);
+        Ok(Self {
+            job_client: job_client::Client::from_var_source(var_source.clone()).await?,
+            registry_client: FeathrApiClient::from_var_source(var_source.clone()).await?,
+            var_source,
+        })
+    }
+
+    pub async fn from_str<T>(content: T) -> Result<Self, Error>
+    where
+        T: AsRef<str>,
+    {
+        let var_source = new_var_source(content.as_ref());
         Ok(Self {
             job_client: job_client::Client::from_var_source(var_source.clone()).await?,
             registry_client: FeathrApiClient::from_var_source(var_source.clone()).await?,
