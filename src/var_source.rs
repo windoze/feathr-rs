@@ -1,5 +1,6 @@
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -79,6 +80,19 @@ impl YamlSource {
     }
 }
 
+impl FromStr for YamlSource {
+    type Err = crate::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let root = serde_yaml::from_slice(s.as_bytes())?;
+        Ok(Self {
+            root,
+            overlay: EnvVarSource,
+            kv_overlay: KeyVaultSource::from_env().ok(),
+        })
+    }
+}
+
 #[async_trait]
 impl VarSource for YamlSource {
     async fn get_environment_variable(&self, name: &[&str]) -> Result<String, crate::Error> {
@@ -129,6 +143,23 @@ impl VarSource for KeyVaultSource {
         let credential = DefaultAzureCredential::default();
         let mut client = KeyClient::new(&self.url, &credential).log()?;
         Ok(client.get_secret(&name).await.log()?.value().to_owned())
+    }
+}
+
+pub fn new_var_source<T>(content: T) -> Arc<dyn VarSource + Send + Sync>
+where
+    T: AsRef<str>,
+{
+    match YamlSource::from_str(content.as_ref()) {
+        Ok(src) => {
+            Arc::new(src)
+        }
+        Err(_) => {
+            warn!(
+                "Failed read Feathr config, using environment variables."
+            );
+            Arc::new(EnvVarSource)
+        }
     }
 }
 

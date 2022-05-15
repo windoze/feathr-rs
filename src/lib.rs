@@ -21,7 +21,7 @@ pub use dbfs_client::*;
 pub use livy_client::*;
 pub use project::{AnchorGroup, AnchorGroupBuilder, FeathrProject};
 pub use error::Error;
-pub use var_source::{VarSource, load_var_source, default_var_source};
+pub use var_source::{VarSource, new_var_source, load_var_source, default_var_source};
 pub use feature::{AnchorFeature, DerivedFeature, Feature};
 pub use feature_builder::{AnchorFeatureBuilder, DerivedFeatureBuilder};
 pub use model::*;
