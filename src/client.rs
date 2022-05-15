@@ -29,11 +29,9 @@ impl FeathrClient {
         })
     }
 
-    pub async fn from_str<T>(content: T) -> Result<Self, Error>
-    where
-        T: AsRef<str>,
+    pub async fn from_str(content: &str) -> Result<Self, Error>
     {
-        let var_source = new_var_source(content.as_ref());
+        let var_source = new_var_source(content);
         Ok(Self {
             job_client: job_client::Client::from_var_source(var_source.clone()).await?,
             registry_client: FeathrApiClient::from_var_source(var_source.clone()).await?,
