@@ -326,7 +326,7 @@ mod tests {
 
         println!("Request: {:#?}", req);
 
-        let id = client.submit_job(req).await.unwrap();
+        let id = client.submit_job(req).await.log().unwrap();
 
         let log = client.wait_for_job(id, None).await.unwrap();
 
@@ -334,12 +334,7 @@ mod tests {
 
         println!(
             "Job output URL: {}",
-            client
-                .job_client
-                .get_job_output_url(id)
-                .await
-                .unwrap()
-                .unwrap()
+            client.job_client.get_job_output_url(id).await.ok().flatten().unwrap_or_default()
         );
 
         assert_eq!(client.get_job_status(id).await.unwrap(), JobStatus::Success);

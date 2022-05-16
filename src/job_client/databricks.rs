@@ -2,11 +2,13 @@ use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
 use bytes::Bytes;
-use log::debug;
+use log::{debug, warn};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 
-use crate::{dbfs_client::DbfsClient, Error, JobClient, JobId, JobStatus, SubmitJobRequest, VarSource};
+use crate::{
+    dbfs_client::DbfsClient, Error, JobClient, JobId, JobStatus, SubmitJobRequest, VarSource,
+};
 
 #[async_trait]
 trait LoggedResponse {
@@ -46,16 +48,11 @@ pub struct DatabricksClient {
     dbfs: DbfsClient,
     client: reqwest::Client,
     workspace_dir: String,
-    cluster: NewCluster,
+    cluster: Cluster,
 }
 
 impl DatabricksClient {
-    pub fn new(
-        url_base: &str,
-        token: &str,
-        workspace_dir: &str,
-        cluster: Option<NewCluster>,
-    ) -> Self {
+    pub fn new(url_base: &str, token: &str, workspace_dir: &str, cluster: Option<Cluster>) -> Self {
         let mut headers = reqwest::header::HeaderMap::new();
         if !token.is_empty() {
             headers.insert(
@@ -71,13 +68,13 @@ impl DatabricksClient {
                 .build()
                 .unwrap(),
             workspace_dir: workspace_dir.to_string(),
-            cluster: cluster.unwrap_or(NewCluster {
+            cluster: cluster.unwrap_or(Cluster::NewCluster(NewCluster {
                 num_workers: 2,
                 spark_version: "9.1.x-scala2.12".to_string(),
                 node_type_id: "Standard_D4_v2".to_string(),
                 spark_conf: Default::default(),
                 custom_tags: Default::default(),
-            }),
+            })),
         }
     }
 
@@ -95,6 +92,7 @@ impl DatabricksClient {
             .await?
             .json()
             .await?;
+        debug!("Status response: {:#?}", resp);
         let status = match resp.metadata.state.life_cycle_state {
             RunLifeCycleState::Pending => JobStatus::Starting,
             RunLifeCycleState::Running | RunLifeCycleState::Terminating => JobStatus::Running,
@@ -115,11 +113,14 @@ impl DatabricksClient {
                     .unwrap_or_default(),
             ]
             .join(""),
-            resp.metadata
-                .cluster_spec
-                .new_cluster
-                .custom_tags
-                .to_owned(),
+            match resp.metadata.cluster_spec.cluster {
+                Cluster::ExistingClusterId(_) => {
+                    warn!("Cannot get output directory from existing cluster");
+                    Default::default()
+                }
+                Cluster::NewCluster(nc) => nc.custom_tags,
+            }
+            .to_owned(),
         ))
     }
 
@@ -144,20 +145,22 @@ impl DatabricksClient {
             .get_environment_variable(&["DATABRICKS_WORKSPACE_TOKEN_VALUE"])
             .await?;
 
+        #[derive(Debug, Deserialize)]
+        struct ConfigTemplate {
+            #[serde(flatten)]
+            cluster: Cluster,
+        }
+
         let value: serde_yaml::Value = serde_yaml::from_str(
             &var_source
-                .get_environment_variable(&[
-                    "spark_config",
-                    "databricks",
-                    "config_template",
-                    "new_cluster",
-                ])
+                .get_environment_variable(&["spark_config", "databricks", "config_template"])
                 .await?,
         )?;
 
         debug!("{:#?}", value);
 
-        let nc = serde_yaml::from_value::<NewCluster>(value.to_owned()).unwrap();
+        let config_template = serde_yaml::from_value::<ConfigTemplate>(value.to_owned())?;
+        let nc = config_template.cluster;
 
         Ok(Self::new(&url_base, &token, &workspace_dir, Some(nc)))
     }
@@ -199,7 +202,8 @@ struct RunMetadata {
 
 #[derive(Clone, Debug, Deserialize)]
 struct ClusterSpec {
-    new_cluster: NewCluster,
+    #[serde(flatten)]
+    cluster: Cluster,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -219,7 +223,8 @@ struct SubmitRunRequest {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct SubmitRunSettings {
     task_key: String,
-    new_cluster: NewCluster,
+    #[serde(flatten)]
+    cluster: Cluster,
     #[serde(flatten)]
     task: SparkTask,
     libraries: Vec<Library>,
@@ -227,12 +232,23 @@ struct SubmitRunSettings {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct NewCluster {
+    #[serde(default)]
     pub num_workers: u32,
+    #[serde(default)]
     pub spark_version: String,
+    #[serde(default)]
     pub node_type_id: String,
+    #[serde(default)]
     pub spark_conf: Option<HashMap<String, String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_tags: Option<HashMap<String, String>>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Cluster {
+    ExistingClusterId(String),
+    NewCluster(NewCluster),
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -329,7 +345,8 @@ impl JobClient for DatabricksClient {
                 .write_remote_file(
                     &self.get_remote_url(&format!(
                         "feathr_pyspark_driver_{}_{}.py",
-                        request.name, request.job_key.as_simple()
+                        request.name,
+                        request.job_key.as_simple()
                     )),
                     code.as_bytes(),
                 )
@@ -349,20 +366,25 @@ impl JobClient for DatabricksClient {
 
         let libraries: Vec<Library> = jars.into_iter().map(|jar| Library::Jar(jar)).collect();
 
-        let mut new_cluster = self.cluster.clone();
-        new_cluster.custom_tags = if request.output.is_empty() {
-            None
-        } else {
-            let tags: HashMap<String, String> = [("output".to_string(), request.output)]
-                .into_iter()
-                .collect();
-            Some(tags)
+        let cluster = match self.cluster.clone() {
+            Cluster::NewCluster(mut cluster) => {
+                cluster.custom_tags = if request.output.is_empty() {
+                    None
+                } else {
+                    let tags: HashMap<String, String> = [("output".to_string(), request.output)]
+                        .into_iter()
+                        .collect();
+                    Some(tags)
+                };
+                Cluster::NewCluster(cluster)
+            }
+            Cluster::ExistingClusterId(cluster_id) => Cluster::ExistingClusterId(cluster_id),
         };
 
         let job = SubmitRunRequest {
             tasks: vec![SubmitRunSettings {
                 task_key: request.job_key.as_simple().to_string(),
-                new_cluster,
+                cluster,
                 task,
                 libraries,
             }],
@@ -463,13 +485,13 @@ mod tests {
 
         let x = SubmitRunSettings {
             task_key: uuid::Uuid::new_v4().to_string(),
-            new_cluster: NewCluster {
+            cluster: Cluster::NewCluster(NewCluster {
                 num_workers: 2,
                 spark_version: "9.1.x-scala2.12".to_string(),
                 node_type_id: "Standard_D3_v2".to_string(),
                 spark_conf: Default::default(),
                 custom_tags: None,
-            },
+            }),
             task: SparkTask::SparkJarTask {
                 main_class_name: "mainClassName".to_string(),
                 parameters: vec!["arg1".to_string(), "arg2".to_string(), "arg3".to_string()],
@@ -477,5 +499,34 @@ mod tests {
             libraries: lib,
         };
         println!("{}", serde_json::to_string_pretty(&x).unwrap());
+    }
+
+    #[test]
+    fn cluster_conf() {
+        #[derive(Debug, Deserialize)]
+        struct ConfigTemplate {
+            #[serde(flatten)]
+            cluster: Cluster,
+        }
+
+        let s = r#"{'run_name':'','new_cluster':{'spark_version':'9.1.x-scala2.12','node_type_id':'Standard_D3_v2','num_workers':2,'spark_conf':{}},'libraries':[{'jar':''}],'spark_jar_task':{'main_class_name':'','parameters':['']}}"#;
+
+        let ct: ConfigTemplate = serde_yaml::from_str(s).unwrap();
+        match ct.cluster {
+            Cluster::NewCluster(c) => {
+                assert_eq!(c.num_workers, 2)
+            }
+            _ => assert!(false),
+        }
+
+        let s = r#"{'run_name':'','existing_cluster_id':'spark31','libraries':[{'jar':''}],'spark_jar_task':{'main_class_name':'','parameters':['']}}"#;
+
+        let ct: ConfigTemplate = serde_yaml::from_str(s).unwrap();
+        match ct.cluster {
+            Cluster::ExistingClusterId(s) => {
+                assert_eq!(s, "spark31")
+            }
+            _ => assert!(false),
+        }
     }
 }
