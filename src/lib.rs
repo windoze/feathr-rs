@@ -12,7 +12,6 @@ mod job_config;
 mod utils;
 mod job_client;
 mod registry_client;
-mod dbfs_client;
 mod livy_client;
 mod client;
 

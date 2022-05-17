@@ -2,12 +2,13 @@ use std::{collections::HashMap, sync::Arc};
 
 use async_trait::async_trait;
 use bytes::Bytes;
+use dbfs_client::DbfsClient;
 use log::{debug, warn};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 
 use crate::{
-    dbfs_client::DbfsClient, Error, JobClient, JobId, JobStatus, SubmitJobRequest, VarSource,
+    Error, JobClient, JobId, JobStatus, SubmitJobRequest, VarSource,
 };
 
 #[async_trait]

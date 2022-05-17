@@ -48,7 +48,7 @@ pub enum Error {
     AzureStorageError(#[from] azure_storage::Error),
 
     #[error(transparent)]
-    DbfsError(#[from] crate::dbfs_client::DbfsError),
+    DbfsError(#[from] dbfs_client::DbfsError),
 
     #[error("Databricks API Error, Code={0}, Message='{1}'")]
     DatabricksApiError(String, String),

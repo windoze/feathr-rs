@@ -31,6 +31,7 @@ azure_security_keyvault = { git = "https://github.com/Azure/azure-sdk-for-rust.g
 handlebars = "4"
 base64 = "0.13"
 openssl = { version = "0.10", features = ["vendored"] }
+dbfs-client = "0.1"
 
 [dev-dependencies]
 dotenv = "0.15"
