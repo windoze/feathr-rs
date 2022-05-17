@@ -1,11 +1,16 @@
 use std::{
+    cmp::min,
     fmt::Display,
     path::{Path, PathBuf},
+    pin::Pin,
     sync::Arc,
+    task::Poll,
 };
 
 use async_trait::async_trait;
+use futures::{AsyncRead, Future, FutureExt, AsyncBufRead};
 use log::{debug, trace};
+use pin_project::pin_project;
 use reqwest::multipart::Part;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -156,6 +161,29 @@ impl DbfsClient {
         }
     }
 
+    pub fn read(&self, path: &str) -> ReadStreamState {
+        let path = path.to_string();
+        let inner = self.inner.clone();
+        ReadStreamState {
+            reader: inner.clone(),
+            path: path.clone(),
+            step: ReadStreamSteps::Len,
+            file_size: 0,
+            file_offset: 0,
+            current_buf: vec![],
+            current_buf_offset: 0,
+            len_future: Box::pin(async move {
+                inner.get_status(&path)
+                    .map(|r| {
+                        r.map(|s| s.file_size)
+                            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                    })
+                    .await
+            }),
+            current_future: None,
+        }
+    }
+
     pub async fn read_file(&self, path: &str) -> Result<Vec<u8>> {
         let path = strip_dbfs_prefix(path)?;
         debug!("Reading DBFS file {}", path);
@@ -164,7 +192,7 @@ impl DbfsClient {
         let mut ret = Vec::with_capacity(file_size);
         let mut offset = 0;
         loop {
-            let data = self.inner.read(path, offset, CHUNK_SIZE).await?;
+            let data = self.inner.read_block(path, offset, CHUNK_SIZE).await?;
             offset += data.len();
             ret.extend(data.into_iter());
             if offset >= file_size {
@@ -231,7 +259,7 @@ impl DbfsClient {
         let mut offset = 0;
         let mut file = tokio::fs::File::create(local_path.as_ref()).await?;
         loop {
-            let data = self.inner.read(remote_path, offset, CHUNK_SIZE).await?;
+            let data = self.inner.read_block(remote_path, offset, CHUNK_SIZE).await?;
             offset += data.len();
             file.write_all(&data).await?;
             if offset >= file_size {
@@ -562,7 +590,7 @@ impl DbfsClientInner {
         Ok(())
     }
 
-    async fn read(&self, path: &str, offset: usize, length: usize) -> Result<Vec<u8>> {
+    async fn read_block(&self, path: &str, offset: usize, length: usize) -> Result<Vec<u8>> {
         trace!("Read file {}", path);
         #[derive(Debug, Serialize)]
         struct Request {
@@ -595,6 +623,238 @@ impl DbfsClientInner {
     }
 }
 
+#[pin_project]
+pub struct ReadStreamState {
+    reader: Arc<DbfsClientInner>,
+    path: String,
+    step: ReadStreamSteps,
+    file_size: usize,
+    file_offset: usize,
+    current_buf: Vec<u8>,
+    current_buf_offset: usize,
+    len_future: Pin<Box<dyn Future<Output = std::result::Result<usize, std::io::Error>>>>,
+    current_future:
+        Option<Pin<Box<dyn Future<Output = std::result::Result<Vec<u8>, std::io::Error>>>>>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum ReadStreamSteps {
+    Len,
+    Read,
+    End,
+}
+
+impl AsyncBufRead for ReadStreamState {
+    fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<std::io::Result<&[u8]>> {
+        let mut this = self.project();
+        trace!("Current State is {:#?}", *this.step);
+        let current_buf = &mut this.current_buf;
+        match *this.step {
+            ReadStreamSteps::Len => {
+                trace!("Polling GetStatus future");
+                match this.len_future.poll_unpin(cx) {
+                    Poll::Ready(r) => {
+                        trace!("GetStatus future ready, result is {:#?}", r);
+                        match r {
+                            Ok(sz) => {
+                                // Got file length, start reading
+                                *this.file_size = sz;
+                                *this.file_offset = 0;
+                                *this.current_buf_offset = 0;
+                                // this.current_buf.clear();
+                                *this.step = ReadStreamSteps::Read;
+                                trace!("State changed to ReadStreamSteps::Read");
+                                cx.waker().wake_by_ref();
+                                Poll::Pending
+                            }
+                            Err(e) => {
+                                // Failed to get file length
+                                Poll::Ready(Err(e))
+                            }
+                        }
+                    }
+                    Poll::Pending => {
+                        // Pending on getting file length
+                        Poll::Pending
+                    }
+                }
+            }
+            ReadStreamSteps::Read => {
+                if *this.file_offset >= *this.file_size {
+                    // Reach EOF
+                    *this.step = ReadStreamSteps::End;
+                    trace!("Reach EOF");
+                    Poll::Ready(std::io::Result::Ok(&this.current_buf[0..0]))
+                } else if current_buf.len() > *this.current_buf_offset {
+                    // There are some data left in the current buffer
+                    let end_pos = current_buf.len();
+                    Poll::Ready(std::io::Result::Ok(&this.current_buf[*this.current_buf_offset..end_pos]))
+                } else if let Some(f) = this.current_future {
+                    // Reading operation in progress
+                    let p = f.poll_unpin(cx);
+                    match p {
+                        Poll::Ready(r) => {
+                            // Current future completed
+                            *this.current_future = None;
+                            match r {
+                                Ok(b) => {
+                                    // Got a buffer
+                                    // Reset current buffer and pos
+                                    *this.current_buf_offset = 0;
+                                    *this.current_buf = b;
+                                    *this.step = ReadStreamSteps::Read;
+                                    cx.waker().wake_by_ref();
+                                    Poll::Pending
+                                }
+                                Err(e) => {
+                                    // Read error
+                                    *this.step = ReadStreamSteps::End;
+                                    Poll::Ready(Err(e))
+                                }
+                            }
+                        }
+                        Poll::Pending => Poll::Pending,
+                    }
+                } else {
+                    // Nothing to provide, start reading
+                    let path = this.path.clone();
+                    let reader = this.reader.clone();
+                    let offset = *this.file_offset;
+                    let f = async move {
+                        reader
+                            .read_block(&path, offset, 4096)
+                            .await
+                            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                    };
+                    *this.current_future = Some(Box::pin(f));
+                    cx.waker().wake_by_ref();
+                    Poll::Pending
+                }
+            }
+            ReadStreamSteps::End => {
+                panic!("ReadStreamState must not be polled after it returned `Poll::Ready(Ok(&[]))`")
+            }
+        }
+    }
+
+    fn consume(self: Pin<&mut Self>, amt: usize) {
+        let this = self.project();
+        *this.current_buf_offset += amt;
+        *this.file_offset += amt;
+    }
+}
+
+impl AsyncRead for ReadStreamState {
+    fn poll_read(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut [u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        let mut this = self.project();
+        let current_buf = &mut this.current_buf;
+        match *this.step {
+            ReadStreamSteps::Len => {
+                match this.len_future.poll_unpin(cx) {
+                    Poll::Ready(r) => {
+                        match r {
+                            Ok(sz) => {
+                                if sz == 0 {
+                                    // File is empty
+                                    debug!("File is empty");
+                                    return Poll::Ready(Ok(0));
+                                }
+                                // Got file length, start reading
+                                debug!("File length is {}", sz);
+                                *this.file_size = sz;
+                                *this.file_offset = 0;
+                                *this.current_buf_offset = 0;
+                                this.current_buf.clear();
+                                *this.step = ReadStreamSteps::Read;
+                                cx.waker().wake_by_ref();
+                                Poll::Pending
+                            }
+                            Err(e) => {
+                                // Failed to get file length
+                                Poll::Ready(Err(e))
+                            }
+                        }
+                    }
+                    Poll::Pending => {
+                        // Pending on getting file length
+                        Poll::Pending
+                    }
+                }
+            }
+            ReadStreamSteps::Read => {
+                if *this.file_offset >= *this.file_size {
+                    // Reach EOF
+                    *this.step = ReadStreamSteps::End;
+                    Poll::Ready(Ok(0))
+                } else if current_buf.len() > *this.current_buf_offset {
+                    // There are some data left in the current buffer
+                    let existing_sz = current_buf.len() - *this.current_buf_offset;
+                    let required_sz = buf.len();
+                    let sz = min(existing_sz, required_sz);
+                    let end_pos = *this.current_buf_offset + sz;
+                    buf[0..sz].copy_from_slice(&current_buf[*this.current_buf_offset..end_pos]);
+                    if end_pos >= this.current_buf.len() {
+                        // Current buffer exhausted
+                        *this.current_buf_offset = 0;
+                    } else {
+                        // Current buffer still has data
+                        *this.current_buf_offset = end_pos;
+                    }
+                    *this.file_offset += sz;
+                    *this.step = ReadStreamSteps::Read;
+                    Poll::Ready(std::io::Result::Ok(sz))
+                } else if let Some(f) = this.current_future {
+                    // Reading operation in progress
+                    let p = f.poll_unpin(cx);
+                    match p {
+                        Poll::Ready(r) => {
+                            // Current future completed
+                            *this.current_future = None;
+                            match r {
+                                Ok(b) => {
+                                    // Got a buffer
+                                    *this.current_buf_offset = 0;
+                                    *this.current_buf = b;
+                                    *this.step = ReadStreamSteps::Read;
+                                    cx.waker().wake_by_ref();
+                                    Poll::Pending
+                                }
+                                Err(e) => {
+                                    // Read error
+                                    *this.step = ReadStreamSteps::End;
+                                    Poll::Ready(Err(e))
+                                }
+                            }
+                        }
+                        Poll::Pending => Poll::Pending,
+                    }
+                } else {
+                    // Nothing to provide, start reading
+                    let path = this.path.clone();
+                    let reader = this.reader.clone();
+                    let offset = *this.file_offset;
+                    let f = async move {
+                        reader
+                            .read_block(&path, offset, 4096)
+                            .await
+                            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+                    };
+                    *this.current_future = Some(Box::pin(f));
+                    cx.waker().wake_by_ref();
+                    Poll::Pending
+                }
+            }
+            ReadStreamSteps::End => {
+                panic!("ReadStreamState must not be polled after it returned `Poll::Ready(Ok(0))`")
+            }
+        }
+    }
+}
+
 fn strip_dbfs_prefix(path: &str) -> Result<&str> {
     let ret = path.strip_prefix("dbfs:").unwrap_or(path);
     if ret.starts_with("/") {
@@ -606,6 +866,7 @@ fn strip_dbfs_prefix(path: &str) -> Result<&str> {
 
 #[cfg(test)]
 mod tests {
+    use futures::{AsyncReadExt, AsyncBufReadExt};
     use rand::Rng;
 
     use super::*;
@@ -697,4 +958,53 @@ mod tests {
         let buf = client.read_file("/large_file").await.unwrap();
         assert_eq!(buf, expected);
     }
+
+    #[tokio::test]
+    async fn test_read() {
+        let client = init();
+        let mut rng = rand::thread_rng();
+        // Exceeds CHUNK_SIZE
+        let expected: Vec<u8> = (0..1024 * 1024 * 2 + 997).map(|_| rng.gen()).collect();
+        client
+            .write_file("dbfs:/test_read", &expected)
+            .await
+            .unwrap();
+
+        let mut offset = 0;
+        let mut buf = [0; 1000];
+        let mut s = client.read("dbfs:/test_read");
+        while let Ok(sz) = s.read(&mut buf).await {
+            debug!("Got {} bytes", sz);
+            if sz == 0 {
+                break;
+            }
+            assert_eq!(&buf[0..sz], &expected[offset..offset+sz]);
+            offset += sz;
+        }
+    }
+
+    #[tokio::test]
+    async fn test_read_line() {
+        let client = init();
+        let expected: Vec<String> = (0..10).map(|n| format!("Line {}\n", n)).collect();
+        client
+            .write_file("dbfs:/test_read_line", expected.join("").as_bytes())
+            .await
+            .unwrap();
+
+        let mut s = client.read("dbfs:/test_read_line");
+        let mut line = String::default();
+        let mut counter = 0;
+        while let Ok(sz) = s.read_line(&mut line).await {
+            debug!("Got {} bytes", sz);
+            debug!("Line is  `{}`", line);
+            if sz == 0 {
+                break;
+            }
+            assert_eq!(line, format!("Line {}\n", counter));
+            counter += 1;
+            line.clear();
+        }
+    }
 }
+
