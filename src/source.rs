@@ -46,6 +46,14 @@ impl Serialize for JdbcAuth {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KafkaSchema {
+    #[serde(rename = "type")]
+    type_: String,
+    #[serde(rename = "avroJson")]
+    avro_json: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 #[serde(rename_all = "camelCase")]
 enum SourceLocation {
@@ -60,6 +68,11 @@ enum SourceLocation {
         query: Option<String>,
         #[serde(flatten)]
         auth: JdbcAuth,
+    },
+    Kafka {
+        brokers: Vec<String>,
+        topics: Vec<String>,
+        schema: KafkaSchema,
     },
     InputContext,
 }
@@ -271,6 +284,92 @@ impl JdbcSourceBuilder {
             },
             time_window_parameters: self.time_window_parameters.clone(),
             preprocessing: self.preprocessing.clone(),
+        };
+        self.owner.insert_source(imp)
+    }
+}
+
+pub struct KafkaSourceBuilder {
+    owner: Arc<RwLock<FeathrProjectImpl>>,
+    name: String,
+    brokers: Vec<String>,
+    topics: Vec<String>,
+    avro_json: String,
+}
+
+impl KafkaSourceBuilder {
+    pub(crate) fn new(owner: Arc<RwLock<FeathrProjectImpl>>, name: &str) -> Self {
+        Self {
+            owner,
+            name: name.to_string(),
+            brokers: Default::default(),
+            topics: Default::default(),
+            avro_json: Default::default(),
+        }
+    }
+
+    pub fn broker<T>(&mut self, broker: T) -> &mut Self
+    where
+        T: ToString,
+    {
+        self.brokers.push(broker.to_string());
+        self
+    }
+
+    pub fn brokers<T>(&mut self, broker: &[T]) -> &mut Self
+    where
+        T: ToString,
+    {
+        self.brokers
+            .extend(broker.into_iter().map(|s| s.to_string()));
+        self
+    }
+
+    pub fn topic<T>(&mut self, topic: T) -> &mut Self
+    where
+        T: ToString,
+    {
+        self.topics.push(topic.to_string());
+        self
+    }
+
+    pub fn topics<T>(&mut self, topic: &[T]) -> &mut Self
+    where
+        T: ToString,
+    {
+        self.topics.extend(topic.into_iter().map(|s| s.to_string()));
+        self
+    }
+
+    pub fn avro_schema<T>(&mut self, schema: &T) -> &mut Self
+    where
+        T: Serialize,
+    {
+        self.avro_json = serde_json::to_string_pretty(schema).unwrap();
+        self
+    }
+
+    pub fn avro_json<T>(&mut self, json: &T) -> &mut Self
+    where
+        T: ToString,
+    {
+        self.avro_json = json.to_string();
+        self
+    }
+
+    pub fn build(&self) -> Result<Source, Error> {
+        let imp = SourceImpl {
+            name: self.name.to_string(),
+            location: SourceLocation::Kafka {
+                brokers: self.brokers.clone(),
+                topics: self.topics.clone(),
+                schema: KafkaSchema {
+                    type_: "KAFKA".to_string(),
+                    avro_json: self.avro_json.clone(),
+                },
+            },
+            time_window_parameters: None,
+            preprocessing: None,
         };
         self.owner.insert_source(imp)
     }

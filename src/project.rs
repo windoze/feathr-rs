@@ -11,7 +11,7 @@ use crate::feature_builder::{AnchorFeatureBuilder, DerivedFeatureBuilder};
 use crate::{
     DateTimeResolution, Error, Feature, FeatureQuery, FeatureType, HdfsSourceBuilder,
     JdbcSourceBuilder, ObservationSettings, Source, SourceImpl, SubmitGenerationJobRequestBuilder,
-    SubmitJoiningJobRequestBuilder, TypedKey,
+    SubmitJoiningJobRequestBuilder, TypedKey, KafkaSourceBuilder,
 };
 
 /**
@@ -107,6 +107,13 @@ impl FeathrProject {
      */
     pub fn jdbc_source(&self, name: &str, url: &str) -> JdbcSourceBuilder {
         JdbcSourceBuilder::new(self.inner.clone(), name, url)
+    }
+
+    /**
+     * Start creating a JDBC data source with given name
+     */
+    pub fn kafka_source(&self, name: &str) -> KafkaSourceBuilder {
+        KafkaSourceBuilder::new(self.inner.clone(), name)
     }
 
     /**

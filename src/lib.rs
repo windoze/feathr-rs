@@ -16,7 +16,6 @@ mod livy_client;
 mod client;
 
 use log::debug;
-pub use dbfs_client::*;
 pub use livy_client::*;
 pub use project::{AnchorGroup, AnchorGroupBuilder, FeathrProject};
 pub use error::Error;
