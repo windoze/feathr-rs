@@ -214,7 +214,7 @@ pub enum Aggregation {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExpressionDef {
-    sql_expr: String,
+    pub sql_expr: String,
 }
 
 fn ser_opt_dur<S>(d: &Option<Duration>, s: S) -> std::result::Result<S::Ok, S::Error>

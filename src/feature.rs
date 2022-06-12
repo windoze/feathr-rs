@@ -1,9 +1,11 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, RwLock},
+    sync::Arc,
 };
 
 use serde::{ser::SerializeStruct, Deserialize, Serialize};
+use tokio::sync::RwLock;
+use uuid::Uuid;
 
 use crate::{
     project::{FeathrProjectImpl, FeathrProjectModifier},
@@ -14,6 +16,8 @@ pub trait Feature
 where
     Self: Sized,
 {
+    fn is_anchor_feature(&self) -> bool;
+    fn get_id(&self) -> Uuid;
     fn get_name(&self) -> String;
     fn get_type(&self) -> FeatureType;
     fn get_key(&self) -> Vec<TypedKey>;
@@ -29,18 +33,26 @@ pub struct AnchorFeature {
 }
 
 impl AnchorFeature {
-    pub fn with_key(&self, group: &str, key_alias: &[&str]) -> Result<Self, Error> {
+    pub async fn with_key(&self, group: &str, key_alias: &[&str]) -> Result<Self, Error> {
         self.owner
-            .insert_anchor(group, self.inner.with_key(key_alias)?)
+            .insert_anchor(group, self.inner.with_key(key_alias)?).await
     }
 
-    pub fn as_feature(&self, group: &str, feature_alias: &str) -> Result<Self, Error> {
+    pub async fn as_feature(&self, group: &str, feature_alias: &str) -> Result<Self, Error> {
         self.owner
-            .insert_anchor(group, self.inner.as_feature(feature_alias))
+            .insert_anchor(group, self.inner.as_feature(feature_alias)).await
     }
 }
 
 impl Feature for AnchorFeature {
+    fn is_anchor_feature(&self) -> bool {
+        true
+    }
+
+    fn get_id(&self) -> Uuid {
+        self.inner.base.id
+    }
+
     fn get_name(&self) -> String {
         self.inner.base.name.clone()
     }
@@ -85,17 +97,25 @@ pub struct DerivedFeature {
 }
 
 impl DerivedFeature {
-    pub fn with_key(&self, key_alias: &[&str]) -> Result<Self, Error> {
-        self.owner.insert_derived(self.inner.with_key(key_alias)?)
+    pub async fn with_key(&self, key_alias: &[&str]) -> Result<Self, Error> {
+        self.owner.insert_derived(self.inner.with_key(key_alias)?).await
     }
 
-    pub fn as_feature(&self, feature_alias: &str) -> Result<Self, Error> {
+    pub async fn as_feature(&self, feature_alias: &str) -> Result<Self, Error> {
         self.owner
-            .insert_derived(self.inner.as_feature(feature_alias))
+            .insert_derived(self.inner.as_feature(feature_alias)).await
     }
 }
 
 impl Feature for DerivedFeature {
+    fn is_anchor_feature(&self) -> bool {
+        false
+    }
+    
+    fn get_id(&self) -> Uuid {
+        self.inner.base.id
+    }
+    
     fn get_name(&self) -> String {
         self.inner.base.name.clone()
     }
@@ -135,6 +155,8 @@ impl ToString for &DerivedFeature {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(crate) struct FeatureBase {
+    #[serde(skip)]
+    pub(crate) id: Uuid,
     #[serde(skip)]
     pub(crate) name: String,
     #[serde(rename = "type", default)]
@@ -185,6 +207,14 @@ impl AnchorFeatureImpl {
 }
 
 impl Feature for AnchorFeatureImpl {
+    fn is_anchor_feature(&self) -> bool {
+        true
+    }
+    
+    fn get_id(&self) -> Uuid {
+        self.base.id
+    }
+    
     fn get_name(&self) -> String {
         self.base.name.to_owned()
     }
@@ -214,6 +244,8 @@ impl Feature for AnchorFeatureImpl {
 pub(crate) struct InputFeature {
     pub(crate) key: Vec<TypedKey>,
     pub(crate) feature: String,
+    pub(crate) id: Uuid,
+    pub(crate) is_anchor_feature: bool,
 }
 
 impl Serialize for InputFeature {
@@ -277,6 +309,14 @@ impl DerivedFeatureImpl {
 }
 
 impl Feature for DerivedFeatureImpl {
+    fn is_anchor_feature(&self) -> bool {
+        false
+    }
+    
+    fn get_id(&self) -> Uuid {
+        self.base.id
+    }
+    
     fn get_name(&self) -> String {
         self.base.name.to_owned()
     }

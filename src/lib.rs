@@ -30,7 +30,7 @@ pub use materialization::*;
 pub use job_config::*;
 pub use utils::ExtDuration;
 pub use job_client::*;
-pub use registry_client::{FeatureRegistry, FeathrApiClient, PurviewClient};
+pub use registry_client::{FeatureRegistry, FeathrApiClient};
 pub use client::FeathrClient;
 
 /// Log if `Result` is an error

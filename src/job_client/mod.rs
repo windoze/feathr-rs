@@ -847,7 +847,7 @@ fn gen_main_python(
     Some(hbs.render("py", &ctx).unwrap())
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Client {
     AzureSynapse(Arc<AzureSynapseClient>),
     Databricks(Arc<DatabricksClient>),

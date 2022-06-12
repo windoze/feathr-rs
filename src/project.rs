@@ -1,17 +1,23 @@
-use std::sync::RwLock;
 use std::{collections::HashMap, sync::Arc};
 
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use indexmap::IndexMap;
 use serde::ser::SerializeStruct;
 use serde::Serialize;
+use tokio::sync::RwLock;
+use uuid::Uuid;
 
-use crate::feature::{AnchorFeature, AnchorFeatureImpl, DerivedFeature, DerivedFeatureImpl};
+use crate::client::FeathrClientImpl;
+use crate::feature::{
+    AnchorFeature, AnchorFeatureImpl, DerivedFeature, DerivedFeatureImpl, InputFeature,
+};
 use crate::feature_builder::{AnchorFeatureBuilder, DerivedFeatureBuilder};
+use crate::registry_client::api_models::{EdgeType, EntityLineage, EntityType};
 use crate::{
-    DateTimeResolution, Error, Feature, FeatureQuery, FeatureType, HdfsSourceBuilder,
-    JdbcSourceBuilder, ObservationSettings, Source, SourceImpl, SubmitGenerationJobRequestBuilder,
-    SubmitJoiningJobRequestBuilder, TypedKey, KafkaSourceBuilder,
+    DateTimeResolution, Error, Feature, FeatureQuery, FeatureRegistry, FeatureType,
+    HdfsSourceBuilder, JdbcSourceBuilder, KafkaSourceBuilder, ObservationSettings, Source,
+    SourceImpl, SourceLocation, SubmitGenerationJobRequestBuilder, SubmitJoiningJobRequestBuilder,
+    TypedKey,
 };
 
 /**
@@ -19,58 +25,94 @@ use crate::{
  */
 #[derive(Debug)]
 pub struct FeathrProject {
-    input_context: Source,
-    inner: Arc<RwLock<FeathrProjectImpl>>,
+    pub(crate) inner: Arc<RwLock<FeathrProjectImpl>>,
 }
 
 impl FeathrProject {
     /**
      * Create a new Feathr project with name
      */
-    pub fn new(name: &str) -> Self {
+    pub async fn new_detached(name: &str) -> Self {
+        // TODO:
         let inner = Arc::new(RwLock::new(FeathrProjectImpl {
+            id: Uuid::new_v4(),
+            owner: None,
             name: name.to_string(),
             anchor_groups: Default::default(),
             derivations: Default::default(),
+            anchor_features: Default::default(),
+            anchor_map: Default::default(),
             sources: Default::default(),
+            registry_tags: Default::default(),
         }));
-        FeathrProject {
-            input_context: Source {
-                inner: Arc::new(SourceImpl::INPUT_CONTEXT()),
-            },
-            inner,
-        }
+        inner
+            .insert_source(SourceImpl::INPUT_CONTEXT())
+            .await
+            .unwrap(); // TODO!
+        FeathrProject { inner }
+    }
+
+    /**
+     * Create a new Feathr project with name
+     */
+    pub async fn new(owner: Arc<FeathrClientImpl>, name: &str, id: Uuid) -> Self {
+        // TODO:
+        let inner = Arc::new(RwLock::new(FeathrProjectImpl {
+            id,
+            owner: Some(owner),
+            name: name.to_string(),
+            anchor_groups: Default::default(),
+            derivations: Default::default(),
+            anchor_features: Default::default(),
+            anchor_map: Default::default(),
+            sources: Default::default(),
+            registry_tags: Default::default(),
+        }));
+        inner
+            .insert_source(SourceImpl::INPUT_CONTEXT())
+            .await
+            .unwrap(); // TODO!
+        FeathrProject { inner }
+    }
+
+    pub async fn get_registry_tags(&self) -> HashMap<String, String> {
+        self.inner.read().await.registry_tags.to_owned()
     }
 
     /**
      * Retrieve anchor feature with `name` from specified group
      */
-    pub fn get_anchor(&self, group: &str, name: &str) -> Result<AnchorFeature, Error> {
-        let r = self.inner.read()?;
+    pub async fn get_anchor_feature(
+        &self,
+        group: &str,
+        name: &str,
+    ) -> Result<AnchorFeature, Error> {
+        let r = self.inner.read().await;
         Ok(AnchorFeature {
             owner: self.inner.clone(),
-            inner: r.get_anchor(group, name)?,
+            inner: r.get_anchor_feature(group, name)?,
         })
     }
 
     /**
      * Retrieve derived feature with `name`
      */
-    pub fn get_derived(&self, name: &str) -> Result<DerivedFeature, Error> {
-        let r = self.inner.read()?;
+    pub async fn get_derived_feature(&self, name: &str) -> Result<DerivedFeature, Error> {
+        let r = self.inner.read().await;
         Ok(DerivedFeature {
             owner: self.inner.clone(),
-            inner: r.get_derived(name)?,
+            inner: r.get_derived_feature(name)?,
         })
     }
 
     /**
      * Retrieve anchor group with `name`
      */
-    pub fn get_anchor_group(&self, name: &str) -> Result<AnchorGroup, Error> {
+    pub async fn get_anchor_group(&self, name: &str) -> Result<AnchorGroup, Error> {
         let g = self
             .inner
-            .read()?
+            .read()
+            .await
             .anchor_groups
             .get(name)
             .ok_or_else(|| Error::AnchorGroupNotFound(name.to_string()))?
@@ -91,7 +133,7 @@ impl FeathrProject {
     /**
      * Start creating a derived feature with given name and feature type
      */
-    pub fn derived(&self, name: &str, feature_type: FeatureType) -> DerivedFeatureBuilder {
+    pub fn derived_feature(&self, name: &str, feature_type: FeatureType) -> DerivedFeatureBuilder {
         DerivedFeatureBuilder::new(self.inner.clone(), name, feature_type)
     }
 
@@ -120,14 +162,16 @@ impl FeathrProject {
      * Returns the placeholder data source
      */
     #[allow(non_snake_case)]
-    pub fn INPUT_CONTEXT(&self) -> Source {
-        self.input_context.clone()
+    pub async fn INPUT_CONTEXT(&self) -> Source {
+        Source {
+            inner: self.inner.read().await.sources["PASSTHROUGH"].to_owned(),
+        }
     }
 
     /**
      * Creates the Spark job request for a feature-joining job
      */
-    pub fn feature_join_job<O, Q>(
+    pub async fn feature_join_job<O, Q>(
         &self,
         observation_settings: O,
         feature_query: &[&Q],
@@ -138,23 +182,26 @@ impl FeathrProject {
         Q: Into<FeatureQuery> + Clone,
     {
         let fq: Vec<FeatureQuery> = feature_query.iter().map(|&q| q.clone().into()).collect();
-        let feature_names: Vec<String> = fq.into_iter().flat_map(|q| q.feature_list.into_iter()).collect();
+        let feature_names: Vec<String> = fq
+            .into_iter()
+            .flat_map(|q| q.feature_list.into_iter())
+            .collect();
 
         let ob = observation_settings.into();
         Ok(SubmitJoiningJobRequestBuilder::new_join(
-            format!("{}_feathr_feature_join_job", self.inner.read()?.name),
+            format!("{}_feathr_feature_join_job", self.inner.read().await.name),
             ob.observation_path.to_string(),
-            self.get_feature_config()?,
+            self.get_feature_config().await?,
             self.get_feature_join_config(ob, feature_query, output)?,
-            self.get_secret_keys()?,
-            self.get_user_functions(&feature_names)?,
+            self.get_secret_keys().await?,
+            self.get_user_functions(&feature_names).await?,
         ))
     }
 
     /**
      * Creates the Spark job request for a feature-generation job
      */
-    pub fn feature_gen_job<T>(
+    pub async fn feature_gen_job<T>(
         &self,
         feature_names: &[T],
         start: DateTime<Utc>,
@@ -168,32 +215,32 @@ impl FeathrProject {
         Ok(SubmitGenerationJobRequestBuilder::new_gen(
             format!(
                 "{}_feathr_feature_materialization_job",
-                self.inner.read()?.name
+                self.inner.read().await.name
             ),
             &feature_names,
             Default::default(), // TODO:
-            self.get_feature_config()?,
-            self.get_secret_keys()?,
+            self.get_feature_config().await?,
+            self.get_secret_keys().await?,
             start,
             end,
             step,
-            self.get_user_functions(&feature_names)?,
+            self.get_user_functions(&feature_names).await?,
         ))
     }
 
-    pub(crate) fn get_user_functions(
+    pub(crate) async fn get_user_functions(
         &self,
         feature_names: &[String],
     ) -> Result<HashMap<String, String>, Error> {
-        Ok(self.inner.read()?.get_user_functions(feature_names))
+        Ok(self.inner.read().await.get_user_functions(feature_names))
     }
 
-    pub(crate) fn get_secret_keys(&self) -> Result<Vec<String>, Error> {
-        Ok(self.inner.read()?.get_secret_keys())
+    pub(crate) async fn get_secret_keys(&self) -> Result<Vec<String>, Error> {
+        Ok(self.inner.read().await.get_secret_keys())
     }
 
-    pub(crate) fn get_feature_config(&self) -> Result<String, Error> {
-        let r = self.inner.read()?;
+    pub(crate) async fn get_feature_config(&self) -> Result<String, Error> {
+        let r = self.inner.read().await;
         let s = serde_json::to_string_pretty(&*r).unwrap();
         Ok(s)
     }
@@ -230,82 +277,230 @@ impl FeathrProject {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
 pub(crate) struct FeathrProjectImpl {
-    #[serde(skip_serializing)]
-    name: String,
-    #[serde(rename = "anchors")]
-    anchor_groups: HashMap<String, Arc<RwLock<AnchorGroupImpl>>>,
-    derivations: HashMap<String, Arc<DerivedFeatureImpl>>,
-    sources: HashMap<String, Arc<SourceImpl>>,
+    pub(crate) owner: Option<Arc<FeathrClientImpl>>,
+    pub(crate) id: Uuid,
+    pub(crate) name: String,
+    pub(crate) anchor_groups: HashMap<String, Arc<AnchorGroupImpl>>,
+    pub(crate) derivations: HashMap<String, Arc<DerivedFeatureImpl>>,
+    pub(crate) anchor_features: HashMap<String, Arc<AnchorFeatureImpl>>,
+    pub(crate) anchor_map: HashMap<String, Vec<String>>,
+    pub(crate) sources: HashMap<String, Arc<SourceImpl>>,
+    pub(crate) registry_tags: HashMap<String, String>,
+}
+
+impl Serialize for FeathrProjectImpl {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut entity = serializer.serialize_struct("FeathrProjectImpl", 2)?;
+        #[derive(Serialize)]
+        struct Key {
+            #[serde(rename = "sqlExpr")]
+            sql_expr: Vec<String>,
+        }
+        #[derive(Serialize)]
+        struct AnchorSer {
+            key: Key,
+            source: String,
+            features: HashMap<String, AnchorFeatureImpl>,
+        }
+
+        let map: HashMap<_, _> = self
+            .anchor_groups
+            .iter()
+            .map(|(name, g)| {
+                let key = Key {
+                    sql_expr: self.anchor_map[name]
+                        .get(0)
+                        .map(|fname| self.anchor_features[fname].get_key_alias())
+                        .unwrap_or_default(),
+                };
+                let source = g.source.get_name();
+                let anchors: HashMap<_, _> = self.anchor_map[name]
+                    .iter()
+                    .map(|f_name| {
+                        (
+                            f_name.to_owned(),
+                            self.anchor_features[f_name].as_ref().to_owned(),
+                        )
+                    })
+                    .collect();
+
+                (
+                    name,
+                    AnchorSer {
+                        key,
+                        source,
+                        features: anchors,
+                    },
+                )
+            })
+            .filter(|(_, a)| !a.features.is_empty())
+            .collect();
+
+        entity.serialize_field("anchors", &map)?;
+        entity.serialize_field("derivations", &self.derivations)?;
+        entity.serialize_field(
+            "sources",
+            &self
+                .sources
+                .iter()
+                .filter(|(_, s)| !s.is_input_context())
+                .collect::<HashMap<_, _>>(),
+        )?;
+        entity.end()
+    }
 }
 
 impl FeathrProjectImpl {
-    fn get_anchor(&self, group: &str, name: &str) -> Result<Arc<AnchorFeatureImpl>, Error> {
-        let g = self
-            .anchor_groups
+    fn get_anchor_group_key_alias(&self, group: &str) -> Vec<String> {
+        self.anchor_map
             .get(group)
-            .ok_or_else(|| Error::AnchorGroupNotFound(group.to_string()))?;
-        g.read()?.get(name)
+            .map(|features| {
+                features
+                    .get(0)
+                    .map(|fname| self.anchor_features[fname].get_key_alias())
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default()
     }
 
-    fn get_derived(&self, name: &str) -> Result<Arc<DerivedFeatureImpl>, Error> {
+    fn get_anchor_feature(&self, group: &str, name: &str) -> Result<Arc<AnchorFeatureImpl>, Error> {
+        self.anchor_map
+            .get(group)
+            .ok_or_else(|| Error::AnchorGroupNotFound(group.to_string()))?
+            .iter()
+            .find(|&s| s == name)
+            .ok_or_else(|| Error::FeatureNotFound(name.to_string()))?;
+
+        self.anchor_features
+            .get(name)
+            .cloned()
+            .ok_or_else(|| Error::FeatureNotFound(name.to_string()))
+    }
+
+    fn get_derived_feature(&self, name: &str) -> Result<Arc<DerivedFeatureImpl>, Error> {
         self.derivations
             .get(name)
             .ok_or_else(|| Error::FeatureNotFound(name.to_string()))
             .map(|r| r.to_owned())
     }
 
-    fn insert_anchor(
+    async fn insert_anchor_group(
         &mut self,
-        group: &str,
-        f: AnchorFeatureImpl,
-    ) -> Result<Arc<AnchorFeatureImpl>, Error> {
-        Ok(self
-            .anchor_groups
-            .get_mut(group)
-            .ok_or_else(|| Error::AnchorGroupNotFound(group.to_string()))?
-            .write()?
-            .insert(f)?)
+        mut group: AnchorGroupImpl,
+    ) -> Result<Arc<AnchorGroupImpl>, Error> {
+        if let Some(c) = self
+            .owner
+            .clone()
+            .map(|o| o.get_registry_client())
+            .flatten()
+        {
+            group.id = c.new_anchor(self.id, group.clone().into()).await?;
+        }
+
+        let name = group.name.clone();
+        let g = Arc::new(group);
+        self.anchor_groups.entry(name.clone()).or_insert(g.clone());
+        self.anchor_map.entry(name).or_insert(Default::default());
+        Ok(g)
     }
 
-    fn insert_derived(&mut self, f: DerivedFeatureImpl) -> Arc<DerivedFeatureImpl> {
+    async fn insert_anchor_feature(
+        &mut self,
+        group: &str,
+        mut f: AnchorFeatureImpl,
+    ) -> Result<Arc<AnchorFeatureImpl>, Error> {
+        let anchors = self.anchor_map.get(group).map(Vec::len).unwrap_or_default();
+        if anchors != 0 && (f.get_key_alias() != self.get_anchor_group_key_alias(group)) {
+            return Err(Error::InvalidKeyAlias(f.get_name(), group.to_string()));
+        }
+
+        let g = self
+            .anchor_groups
+            .get_mut(group)
+            .ok_or_else(|| Error::AnchorGroupNotFound(group.to_string()))?;
+
+        if let Some(c) = self
+            .owner
+            .clone()
+            .map(|o| o.get_registry_client())
+            .flatten()
+        {
+            f.base.id =  c.new_anchor_feature(self.id, g.id, f.clone().into())
+                .await?;
+        }
+
+        if !matches!(g.source.inner.location, SourceLocation::InputContext)
+            && (f.get_key().is_empty() || f.get_key() == vec![TypedKey::DUMMY_KEY()])
+        {
+            return Err(Error::DummyKeyUsedWithoutInputContext(f.get_name()));
+        }
+        let name = f.get_name();
+        self.anchor_map.get_mut(group).map(|g| g.push(name.clone()));
+        let ret = Arc::new(f);
+        self.anchor_features.insert(name, ret.clone());
+
+        Ok(ret)
+    }
+
+    async fn insert_derived_feature(
+        &mut self,
+        mut f: DerivedFeatureImpl,
+    ) -> Result<Arc<DerivedFeatureImpl>, Error> {
+        if let Some(c) = self
+            .owner
+            .clone()
+            .map(|o| o.get_registry_client())
+            .flatten()
+        {
+            f.base.id = c.new_derived_feature(self.id, f.clone().into()).await?;
+        }
+
         let name = f.base.name.clone();
         let ret = Arc::new(f);
         self.derivations.insert(name, ret.clone());
-        ret
+        Ok(ret)
     }
 
-    fn insert_source(&mut self, s: SourceImpl) -> Arc<SourceImpl> {
+    async fn insert_source(&mut self, mut s: SourceImpl) -> Result<Arc<SourceImpl>, Error> {
+        if let Some(c) = self
+            .owner
+            .clone()
+            .map(|o| o.get_registry_client())
+            .flatten()
+        {
+            s.id = c.new_source(self.id, s.clone().into()).await?;
+        }
+
         let name = s.name.clone();
         let ret = Arc::new(s);
         self.sources.insert(name, ret.clone());
-        ret
+        Ok(ret)
     }
 
     fn get_user_functions(&self, feature_names: &[String]) -> HashMap<String, String> {
-        self.anchor_groups
-            .iter()
-            .filter_map(|(_, g)| {
-                g.read().unwrap().source.get_preprocessing().map(|pp| {
-                    let features = g
-                        .read()
-                        .unwrap()
-                        .anchors
-                        .iter()
-                        .filter_map(|(name, _)| {
-                            if feature_names.contains(name) {
-                                Some(name.to_owned())
-                            } else {
-                                None
-                            }
-                        })
-                        .collect::<Vec<String>>()
-                        .join(",");
-                    (features, pp)
-                })
-            })
-            .collect()
+        let mut ret = HashMap::new();
+        for (_, g) in &self.anchor_groups {
+            if let Some(pp) = g.source.get_preprocessing() {
+                let features = self.anchor_map[&g.name]
+                    .iter()
+                    .filter_map(|name| {
+                        if feature_names.contains(name) {
+                            Some(name.to_owned())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<String>>()
+                    .join(",");
+                ret.insert(features, pp);
+            }
+        }
+        ret
     }
 
     fn get_secret_keys(&self) -> Vec<String> {
@@ -318,73 +513,18 @@ impl FeathrProjectImpl {
 }
 
 #[allow(dead_code)]
-#[derive(Debug)]
-struct AnchorGroupImpl {
-    name: String,
-    anchors: IndexMap<String, Arc<AnchorFeatureImpl>>,
-    source: Source,
-    registry_tags: HashMap<String, String>,
-}
-
-impl AnchorGroupImpl {
-    fn insert(&mut self, f: AnchorFeatureImpl) -> Result<Arc<AnchorFeatureImpl>, Error> {
-        if self.source != Source::INPUT_CONTEXT()
-            && (f.get_key().is_empty() || f.get_key() == vec![TypedKey::DUMMY_KEY()])
-        {
-            return Err(Error::DummyKeyUsedWithoutInputContext(f.get_name()));
-        }
-
-        if !self.anchors.is_empty() && (f.get_key_alias() != self.get_key_alias()) {
-            return Err(Error::InvalidKeyAlias(f.get_name(), self.name.clone()));
-        }
-
-        let name = f.base.name.clone();
-        let ret = Arc::new(f);
-        self.anchors.insert(name, ret.clone());
-        Ok(ret)
-    }
-
-    fn get(&self, name: &str) -> Result<Arc<AnchorFeatureImpl>, Error> {
-        Ok(self
-            .anchors
-            .get(name)
-            .ok_or_else(|| Error::FeatureNotFound(name.to_string()))?
-            .to_owned())
-    }
-
-    fn get_key_alias(&self) -> Vec<String> {
-        self.anchors
-            .get_index(0)
-            .map(|(_, v)| v.get_key_alias())
-            .unwrap_or_default()
-    }
-}
-
-impl Serialize for AnchorGroupImpl {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let mut state = serializer.serialize_struct("JdbcAuth", 3)?;
-        state.serialize_field("source", &self.source.get_name())?;
-        #[derive(Serialize)]
-        struct Key {
-            #[serde(rename = "sqlExpr")]
-            sql_expr: Vec<String>,
-        }
-        let key = Key {
-            sql_expr: self.get_key_alias(),
-        };
-        state.serialize_field("key", &key)?;
-        state.serialize_field("features", &self.anchors.clone())?;
-        state.end()
-    }
+#[derive(Clone, Debug)]
+pub(crate) struct AnchorGroupImpl {
+    pub(crate) id: Uuid,
+    pub(crate) name: String,
+    pub(crate) source: Source,
+    pub(crate) registry_tags: HashMap<String, String>,
 }
 
 #[derive(Clone, Debug)]
 pub struct AnchorGroup {
     owner: Arc<RwLock<FeathrProjectImpl>>,
-    inner: Arc<RwLock<AnchorGroupImpl>>,
+    inner: Arc<AnchorGroupImpl>,
 }
 
 impl AnchorGroup {
@@ -395,17 +535,20 @@ impl AnchorGroup {
     ) -> Result<AnchorFeatureBuilder, Error> {
         Ok(AnchorFeatureBuilder::new(
             self.owner.clone(),
-            &self.inner.read()?.name,
+            &self.inner.name,
             name,
             feature_type,
         ))
     }
 
-    pub fn get_anchor(&self, name: &str) -> Result<AnchorFeature, Error> {
-        let r = self.inner.read()?;
+    pub async fn get_anchor(&self, name: &str) -> Result<AnchorFeature, Error> {
         Ok(AnchorFeature {
             owner: self.owner.clone(),
-            inner: r.get(name)?,
+            inner: self
+                .owner
+                .read()
+                .await
+                .get_anchor_feature(&self.inner.name, name)?,
         })
     }
 }
@@ -433,58 +576,179 @@ impl AnchorGroupBuilder {
         self
     }
 
-    pub fn build(&mut self) -> Result<AnchorGroup, Error> {
+    pub async fn build(&mut self) -> Result<AnchorGroup, Error> {
         let group = AnchorGroupImpl {
+            id: Uuid::new_v4(),
             name: self.name.clone(),
-            anchors: Default::default(),
             source: self.source.clone(),
             registry_tags: self.registry_tags.clone(),
         };
 
-        let name = group.name.clone();
-        let mut w = self.owner.write()?;
-        let g = Arc::new(RwLock::new(group));
-        w.anchor_groups.entry(name.clone()).or_insert(g.clone());
-        Ok(AnchorGroup {
-            owner: self.owner.clone(),
-            inner: g,
-        })
+        Ok(self.owner.insert_anchor_group(group).await?)
     }
 }
 
-pub(crate) trait FeathrProjectModifier {
-    fn insert_anchor(&self, group: &str, anchor: AnchorFeatureImpl)
-        -> Result<AnchorFeature, Error>;
-    fn insert_derived(&self, derived: DerivedFeatureImpl) -> Result<DerivedFeature, Error>;
-    fn insert_source(&self, source: SourceImpl) -> Result<Source, Error>;
+#[async_trait]
+pub(crate) trait FeathrProjectModifier: Sync + Send {
+    async fn insert_anchor_group(&self, group: AnchorGroupImpl) -> Result<AnchorGroup, Error>;
+    async fn insert_anchor(
+        &self,
+        group: &str,
+        anchor: AnchorFeatureImpl,
+    ) -> Result<AnchorFeature, Error>;
+    async fn insert_derived(&self, derived: DerivedFeatureImpl) -> Result<DerivedFeature, Error>;
+    async fn insert_source(&self, source: SourceImpl) -> Result<Source, Error>;
 }
 
+#[async_trait]
 impl FeathrProjectModifier for Arc<RwLock<FeathrProjectImpl>> {
-    fn insert_anchor(
+    async fn insert_anchor_group(&self, group: AnchorGroupImpl) -> Result<AnchorGroup, Error> {
+        Ok(AnchorGroup {
+            owner: self.clone(),
+            inner: self.write().await.insert_anchor_group(group).await?,
+        })
+    }
+    async fn insert_anchor(
         &self,
         group: &str,
         anchor: AnchorFeatureImpl,
     ) -> Result<AnchorFeature, Error> {
-        let mut w = self.write()?;
+        let mut w = self.write().await;
         Ok(AnchorFeature {
             owner: self.clone(),
-            inner: w.insert_anchor(group, anchor)?,
+            inner: w.insert_anchor_feature(group, anchor).await?,
         })
     }
 
-    fn insert_derived(&self, derived: DerivedFeatureImpl) -> Result<DerivedFeature, Error> {
-        let mut w = self.write()?;
+    async fn insert_derived(&self, derived: DerivedFeatureImpl) -> Result<DerivedFeature, Error> {
+        let mut w = self.write().await;
         Ok(DerivedFeature {
             owner: self.clone(),
-            inner: w.insert_derived(derived),
+            inner: w.insert_derived_feature(derived).await?,
         })
     }
 
-    fn insert_source(&self, source: SourceImpl) -> Result<Source, Error> {
-        let mut w = self.write()?;
+    async fn insert_source(&self, source: SourceImpl) -> Result<Source, Error> {
+        let mut w = self.write().await;
         Ok(Source {
-            inner: w.insert_source(source),
+            inner: w.insert_source(source).await?,
         })
+    }
+}
+
+impl TryFrom<EntityLineage> for FeathrProjectImpl {
+    type Error = Error;
+
+    fn try_from(value: EntityLineage) -> Result<Self, Self::Error> {
+        // Build relation maps
+        let belongs_map: HashMap<Uuid, String> = value
+            .relations
+            .iter()
+            .filter(|&r| r.edge_type == EdgeType::BelongsTo)
+            .map(|r| {
+                (
+                    r.from.to_owned(),
+                    value.guid_entity_map[&r.to].name.to_owned(),
+                )
+            })
+            .collect();
+        let consumes_map: HashMap<Uuid, String> = value
+            .relations
+            .iter()
+            .filter(|&r| r.edge_type == EdgeType::Consumes)
+            .map(|r| {
+                (
+                    r.from.to_owned(),
+                    value.guid_entity_map[&r.to].name.to_owned(),
+                )
+            })
+            .collect();
+        let (_, entity) = value
+            .guid_entity_map
+            .iter()
+            .find(|(_, entity)| entity.get_entity_type() == EntityType::Project)
+            .ok_or_else(|| Error::ProjectNotFound(Default::default()))?;
+        let mut project: FeathrProjectImpl = entity.to_owned().try_into()?;
+        // Add sources into project
+        project.sources = value
+            .guid_entity_map
+            .iter()
+            .filter(|(_, entity)| entity.get_entity_type() == EntityType::Source)
+            .filter_map(|(_, e)| {
+                e.to_owned()
+                    .try_into()
+                    .ok()
+                    .map(|i: SourceImpl| (i.name.clone(), Arc::new(i)))
+            })
+            .collect();
+        // Add all anchor groups into project
+        project.anchor_groups = value
+            .guid_entity_map
+            .iter()
+            .filter(|(_, entity)| entity.get_entity_type() == EntityType::Anchor)
+            .filter_map(|(id, e)| {
+                e.to_owned().try_into().ok().map(|mut i: AnchorGroupImpl| {
+                    i.source = Source {
+                        inner: project.sources[&consumes_map[id]].to_owned(),
+                    };
+                    (i.name.clone(), Arc::new(i))
+                })
+            })
+            .collect();
+        project.anchor_map = project
+            .anchor_groups
+            .iter()
+            .map(|(k, _)| (k.to_owned(), Default::default()))
+            .collect();
+        // Find all anchor features
+        let anchor_features: HashMap<Uuid, AnchorFeatureImpl> = value
+            .guid_entity_map
+            .iter()
+            .filter(|(_, entity)| entity.get_entity_type() == EntityType::AnchorFeature)
+            .filter_map(|(id, e)| e.to_owned().try_into().ok().map(|e| (id.to_owned(), e)))
+            .collect();
+        // Add all anchor features into corresponding anchor groups
+        for (uuid, f) in anchor_features {
+            let g = project.anchor_groups[&belongs_map[&uuid]].to_owned();
+            if let Some(g) = project.anchor_map.get_mut(&g.name) {
+                g.push(f.get_name());
+            }
+            project.anchor_features.insert(f.get_name(), Arc::new(f));
+        }
+        // Add all derived features into project
+        project.derivations = value
+            .guid_entity_map
+            .iter()
+            .filter(|(_, entity)| entity.get_entity_type() == EntityType::DerivedFeature)
+            .filter_map(|(id, e)| {
+                e.to_owned()
+                    .try_into()
+                    .ok()
+                    .map(|mut i: DerivedFeatureImpl| {
+                        i.inputs = value
+                            .relations
+                            .iter()
+                            .filter(|&r| r.edge_type == EdgeType::Consumes && &r.from == id)
+                            .filter_map(|r| {
+                                value.guid_entity_map[&r.to].get_typed_key().ok().map(|k| {
+                                    InputFeature {
+                                        id: r.to,
+                                        key: k,
+                                        feature: value.guid_entity_map[&r.to].name.to_owned(),
+                                        is_anchor_feature: value.guid_entity_map[&r.to].get_entity_type()
+                                            == EntityType::AnchorFeature,
+                                    }
+                                })
+                            })
+                            .map(|f| (f.feature.clone(), f))
+                            .collect();
+                        (i.base.name.clone(), Arc::new(i))
+                    })
+            })
+            .collect();
+
+        // NOTE: returned project doesn't have owner, need to be set later
+        Ok(project)
     }
 }
 
@@ -492,9 +756,9 @@ impl FeathrProjectModifier for Arc<RwLock<FeathrProjectImpl>> {
 mod tests {
     use crate::*;
 
-    #[test]
-    fn it_works() {
-        let proj = FeathrProject::new("p1");
+    #[tokio::test]
+    async fn it_works() {
+        let proj = FeathrProject::new_detached("p1").await;
         let s = proj
             .jdbc_source(
                 "h1",
@@ -503,8 +767,9 @@ mod tests {
             .auth(JdbcSourceAuth::Userpass)
             .dbtable("AzureRegions")
             .build()
+            .await
             .unwrap();
-        let g1 = proj.anchor_group("g1", s).build().unwrap();
+        let g1 = proj.anchor_group("g1", s).build().await.unwrap();
         let k1 = TypedKey::new("c1", ValueType::INT32);
         let k2 = TypedKey::new("c2", ValueType::INT32);
         let f = g1
@@ -513,13 +778,15 @@ mod tests {
             .transform("x")
             .keys(&[&k1, &k2])
             .build()
+            .await
             .unwrap();
-        proj.derived("d1", FeatureType::INT32)
+        proj.derived_feature("d1", FeatureType::INT32)
             .add_input(&f)
             .transform("1")
             .build()
+            .await
             .unwrap();
-        let s = proj.get_feature_config().unwrap();
+        let s = proj.get_feature_config().await.unwrap();
         println!("{}", s);
     }
 }

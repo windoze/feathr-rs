@@ -3,10 +3,15 @@ use std::sync::PoisonError;
 use chrono::{DateTime, Utc};
 use thiserror::Error;
 
+use crate::registry_client::api_models::EntityType;
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("{0} is not a valid duration value")]
     DurationError(String),
+
+    #[error("Project {0} not found")]
+    ProjectNotFound(String),
 
     #[error("Anchor group {0} not found")]
     AnchorGroupNotFound(String),
@@ -81,13 +86,19 @@ pub enum Error {
     KeyVaultNotConfigured,
     
     #[error(transparent)]
-    KeyVaultError(#[from] azure_security_keyvault::Error),
+    KeyVaultError(#[from] azure_core::error::Error),
 
     #[error("Invalid Time Range {0} - {1}")]
     InvalidTimeRange(DateTime<Utc>, DateTime<Utc>),
 
     #[error("Unsupported Spark provider '{0}'")]
     UnsupportedSparkProvider(String),
+
+    #[error("Entity({0}) has invalid type {1:?}")]
+    InvalidEntityType(String, EntityType),
+
+    #[error("Feathr client is not connected to the registry")]
+    DetachedClient,
 }
 
 impl<Guard> From<PoisonError<Guard>> for Error {

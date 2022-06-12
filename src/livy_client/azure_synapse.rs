@@ -1,8 +1,8 @@
 use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
-use azure_core::auth::TokenResponse;
-use azure_identity::token_credentials::{DefaultAzureCredential, TokenCredential};
+use azure_core::auth::{TokenResponse, TokenCredential};
+use azure_identity::DefaultAzureCredential;
 use chrono::{DateTime, Duration};
 use log::trace;
 use oauth2::AccessToken;
@@ -20,12 +20,18 @@ pub enum AzureSynapseError {
     MissingSynapsePool,
 
     #[error(transparent)]
-    DefaultCredentialError(#[from] azure_identity::token_credentials::DefaultAzureCredentialError),
+    DefaultCredentialError(#[from] azure_core::error::Error),
 }
 
 pub struct AadAuthenticator {
     credential: DefaultAzureCredential,
     token: Arc<RwLock<TokenResponse>>,
+}
+
+impl std::fmt::Debug for AadAuthenticator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AadAuthenticator").finish()
+    }
 }
 
 impl AadAuthenticator {
@@ -43,7 +49,7 @@ impl AadAuthenticator {
     }
 
     async fn get_token(&self) -> Result<String> {
-        // 30 seconds ahead of the real expiration, make sure most in-progress operations can be completed w/o trouble. 
+        // 30 seconds ahead of the real expiration, make sure most in-progress operations can be completed w/o trouble.
         if self.token.read()?.expires_on - Duration::seconds(30) < chrono::Utc::now() {
             self.fetch_token().await?;
         }

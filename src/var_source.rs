@@ -4,14 +4,14 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use azure_identity::token_credentials::DefaultAzureCredential;
+use azure_identity::DefaultAzureCredential;
 use azure_security_keyvault::KeyClient;
 use log::{debug, warn};
 
 use crate::Logged;
 
 #[async_trait]
-pub trait VarSource {
+pub trait VarSource: Sync + Send + std::fmt::Debug {
     async fn get_environment_variable(&self, name: &[&str]) -> Result<String, crate::Error>;
 }
 

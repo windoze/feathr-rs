@@ -1,7 +1,10 @@
 use std::{
     collections::{HashMap, HashSet},
-    sync::{Arc, RwLock},
+    sync::Arc,
 };
+
+use tokio::sync::RwLock;
+use uuid::Uuid;
 
 use crate::{
     feature::{
@@ -62,9 +65,10 @@ impl AnchorFeatureBuilder {
         self
     }
 
-    pub fn build(&mut self) -> Result<AnchorFeature, Error> {
+    pub async fn build(&mut self) -> Result<AnchorFeature, Error> {
         let anchor = AnchorFeatureImpl {
             base: FeatureBase {
+                id: Uuid::new_v4(),
                 name: self.name.clone(),
                 feature_type: self.feature_type.to_owned(),
                 key: if self.keys.is_empty() {
@@ -91,7 +95,7 @@ impl AnchorFeatureBuilder {
                 .ok_or_else(|| Error::MissingTransformation(self.name.clone()))?
                 .to_owned(),
         };
-        self.owner.insert_anchor(&self.group, anchor)
+        self.owner.insert_anchor(&self.group, anchor).await
     }
 }
 #[derive(Debug)]
@@ -145,13 +149,15 @@ impl DerivedFeatureBuilder {
 
     pub fn add_input<T: Feature>(&mut self, feature: &T) -> &mut Self {
         self.input_features.push(InputFeature {
+            id: feature.get_id(),
             key: feature.get_key(),
             feature: feature.get_name(),
+            is_anchor_feature: feature.is_anchor_feature(),
         });
         self
     }
 
-    pub fn build(&mut self) -> Result<DerivedFeature, Error> {
+    pub async fn build(&mut self) -> Result<DerivedFeature, Error> {
         // Validation
         let key_alias: HashSet<String> = self
             .input_features
@@ -180,6 +186,7 @@ impl DerivedFeatureBuilder {
 
         let derived = DerivedFeatureImpl {
             base: FeatureBase {
+                id: Uuid::new_v4(),
                 name: self.name.clone(),
                 feature_type: self.feature_type.to_owned(),
                 key: if self.keys.is_empty() {
@@ -219,6 +226,6 @@ impl DerivedFeatureBuilder {
                 .to_owned()
                 .into(),
         };
-        self.owner.insert_derived(derived)
+        self.owner.insert_derived(derived).await
     }
 }

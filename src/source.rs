@@ -1,6 +1,8 @@
-use std::sync::{Arc, RwLock};
+use std::{sync::Arc, collections::HashMap};
 
 use serde::{ser::SerializeStruct, Deserialize, Serialize};
+use tokio::sync::RwLock;
+use uuid::Uuid;
 
 use crate::{
     project::{FeathrProjectImpl, FeathrProjectModifier},
@@ -9,7 +11,7 @@ use crate::{
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(untagged)]
-enum JdbcAuth {
+pub(crate) enum JdbcAuth {
     Userpass { user: String, password: String },
     Token { token: String },
     Anonymous,
@@ -56,7 +58,7 @@ pub struct KafkaSchema {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 #[serde(rename_all = "camelCase")]
-enum SourceLocation {
+pub(crate) enum SourceLocation {
     Hdfs {
         path: String,
     },
@@ -79,32 +81,48 @@ enum SourceLocation {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct TimeWindowParameters {
-    timestamp_column: String,
-    timestamp_column_format: String,
+pub(crate) struct TimeWindowParameters {
+    pub(crate) timestamp_column: String,
+    pub(crate) timestamp_column_format: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SourceImpl {
     #[serde(skip)]
-    pub(crate) name: String,
-    location: SourceLocation,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    time_window_parameters: Option<TimeWindowParameters>,
+    pub(crate) id: Uuid,
     #[serde(skip)]
-    preprocessing: Option<String>,
+    pub(crate) name: String,
+    pub(crate) location: SourceLocation,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) time_window_parameters: Option<TimeWindowParameters>,
+    #[serde(skip)]
+    pub(crate) preprocessing: Option<String>,
+    #[serde(skip)]
+    pub(crate) registry_tags: HashMap<String, String>,
+}
+
+impl Default for SourceImpl {
+    fn default() -> Self {
+        Self::INPUT_CONTEXT()
+    }
 }
 
 impl SourceImpl {
     #[allow(non_snake_case)]
     pub(crate) fn INPUT_CONTEXT() -> SourceImpl {
         SourceImpl {
+            id: Uuid::new_v4(),
             name: "PASSTHROUGH".to_string(),
             location: SourceLocation::InputContext,
             time_window_parameters: None,
             preprocessing: None,
+            registry_tags: Default::default(),
         }
+    }
+
+    pub(crate) fn is_input_context(&self) -> bool {
+        matches!(self.location, SourceLocation::InputContext)
     }
 
     pub(crate) fn get_secret_keys(&self) -> Vec<String> {
@@ -125,6 +143,14 @@ impl SourceImpl {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Source {
     pub(crate) inner: Arc<SourceImpl>,
+}
+
+impl Default for Source {
+    fn default() -> Self {
+        Self {
+            inner: Default::default(),
+        }
+    }
 }
 
 impl Source {
@@ -184,16 +210,18 @@ impl HdfsSourceBuilder {
         self
     }
 
-    pub fn build(&self) -> Result<Source, Error> {
+    pub async fn build(&self) -> Result<Source, Error> {
         let imp = SourceImpl {
+            id: Uuid::new_v4(),
             name: self.name.to_string(),
             location: SourceLocation::Hdfs {
                 path: self.path.clone(),
             },
             time_window_parameters: self.time_window_parameters.clone(),
             preprocessing: self.preprocessing.clone(),
+            registry_tags: Default::default(),
         };
-        self.owner.insert_source(imp)
+        self.owner.insert_source(imp).await
     }
 }
 pub struct JdbcSourceBuilder {
@@ -273,8 +301,9 @@ impl JdbcSourceBuilder {
         self
     }
 
-    pub fn build(&self) -> Result<Source, Error> {
+    pub async fn build(&self) -> Result<Source, Error> {
         let imp = SourceImpl {
+            id: Uuid::new_v4(),
             name: self.name.to_string(),
             location: SourceLocation::Jdbc {
                 url: self.url.clone(),
@@ -284,8 +313,9 @@ impl JdbcSourceBuilder {
             },
             time_window_parameters: self.time_window_parameters.clone(),
             preprocessing: self.preprocessing.clone(),
+            registry_tags: Default::default(),
         };
-        self.owner.insert_source(imp)
+        self.owner.insert_source(imp).await
     }
 }
 
@@ -357,8 +387,9 @@ impl KafkaSourceBuilder {
         self
     }
 
-    pub fn build(&self) -> Result<Source, Error> {
+    pub async fn build(&self) -> Result<Source, Error> {
         let imp = SourceImpl {
+            id: Uuid::new_v4(),
             name: self.name.to_string(),
             location: SourceLocation::Kafka {
                 brokers: self.brokers.clone(),
@@ -370,7 +401,8 @@ impl KafkaSourceBuilder {
             },
             time_window_parameters: None,
             preprocessing: None,
+            registry_tags: Default::default(),
         };
-        self.owner.insert_source(imp)
+        self.owner.insert_source(imp).await
     }
 }

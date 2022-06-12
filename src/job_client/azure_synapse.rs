@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use azure_identity::token_credentials::DefaultAzureCredential;
+use azure_identity::DefaultAzureCredential;
 use azure_storage::storage_shared_key_credential::StorageSharedKeyCredential;
 use azure_storage_datalake::clients::{DataLakeClient, PathClient};
 use bytes::Bytes;
@@ -16,6 +16,7 @@ use crate::{
     JobClient, JobId, JobStatus, Logged, VarSource,
 };
 
+#[derive(Debug)]
 pub struct AzureSynapseClient {
     livy_client: LivyClient<AadAuthenticator>,
     storage_client: DataLakeClient,
