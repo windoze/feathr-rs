@@ -75,6 +75,14 @@ impl FeathrProject {
         FeathrProject { inner }
     }
 
+    pub async fn get_id(&self) -> Uuid {
+        self.inner.read().await.id
+    }
+
+    pub async fn get_name(&self) -> String {
+        self.inner.read().await.name.to_owned()
+    }
+
     pub async fn get_registry_tags(&self) -> HashMap<String, String> {
         self.inner.read().await.registry_tags.to_owned()
     }
@@ -528,6 +536,14 @@ pub struct AnchorGroup {
 }
 
 impl AnchorGroup {
+    pub fn get_id(&self) -> Uuid {
+        self.inner.id
+    }
+
+    pub fn get_name(&self) -> String {
+        self.inner.name.to_owned()
+    }
+
     pub fn anchor(
         &self,
         name: &str,

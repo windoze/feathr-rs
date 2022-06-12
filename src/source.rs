@@ -154,6 +154,10 @@ impl Default for Source {
 }
 
 impl Source {
+    pub fn get_id(&self) -> Uuid {
+        self.inner.id
+    }
+
     pub fn get_name(&self) -> String {
         self.inner.name.clone()
     }
