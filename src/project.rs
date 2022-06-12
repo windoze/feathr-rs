@@ -23,7 +23,7 @@ use crate::{
 /**
  * A Feathr Project is the container of all anchor features, anchor groups, derived features, and data sources.
  */
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct FeathrProject {
     pub(crate) inner: Arc<RwLock<FeathrProjectImpl>>,
 }
