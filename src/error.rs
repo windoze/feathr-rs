@@ -14,6 +14,9 @@ pub enum Error {
     ProjectNotFound(String),
 
     #[error("Anchor group {0} not found")]
+    SourceGroupNotFound(String),
+
+    #[error("Anchor group {0} not found")]
     AnchorGroupNotFound(String),
 
     #[error("Feature {0} not found")]

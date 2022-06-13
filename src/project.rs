@@ -132,6 +132,23 @@ impl FeathrProject {
     /**
      * Retrieve anchor group with `name`
      */
+    pub async fn get_source(&self, name: &str) -> Result<Source, Error> {
+        let g = self
+            .inner
+            .read()
+            .await
+            .sources
+            .get(name)
+            .ok_or_else(|| Error::SourceGroupNotFound(name.to_string()))?
+            .clone();
+        Ok(Source {
+            inner: g,
+        })
+    }
+
+    /**
+     * Retrieve anchor group with `name`
+     */
     pub async fn get_anchor_group(&self, name: &str) -> Result<AnchorGroup, Error> {
         let g = self
             .inner
@@ -558,6 +575,10 @@ impl AnchorGroup {
 
     pub fn get_name(&self) -> String {
         self.inner.name.to_owned()
+    }
+
+    pub async fn get_anchor_features(&self) -> Vec<String> {
+        self.owner.read().await.anchor_map[&self.inner.name].to_owned()
     }
 
     pub fn anchor(
