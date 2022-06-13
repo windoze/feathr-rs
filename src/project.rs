@@ -87,6 +87,22 @@ impl FeathrProject {
         self.inner.read().await.registry_tags.to_owned()
     }
 
+    pub async fn get_sources(&self) -> Vec<String> {
+        self.inner.read().await.sources.keys().map(ToOwned::to_owned).collect()
+    }
+
+    pub async fn get_anchor_groups(&self) -> Vec<String> {
+        self.inner.read().await.anchor_groups.keys().map(ToOwned::to_owned).collect()
+    }
+
+    pub async fn get_anchor_features(&self) -> Vec<String> {
+        self.inner.read().await.anchor_features.keys().map(ToOwned::to_owned).collect()
+    }
+
+    pub async fn get_derived_features(&self) -> Vec<String> {
+        self.inner.read().await.derivations.keys().map(ToOwned::to_owned).collect()
+    }
+
     /**
      * Retrieve anchor feature with `name` from specified group
      */
