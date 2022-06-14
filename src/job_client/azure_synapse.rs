@@ -16,6 +16,8 @@ use crate::{
     JobClient, JobId, JobStatus, Logged, VarSource,
 };
 
+static NOOP_JAR: &'static [u8] = include_bytes!("../../template/noop-1.0.jar");
+
 #[derive(Debug)]
 pub struct AzureSynapseClient {
     livy_client: LivyClient<AadAuthenticator>,
@@ -23,6 +25,7 @@ pub struct AzureSynapseClient {
     storage_account: String,
     container: String,
     workspace_dir: String,
+    maven_artifact: String,
 }
 
 impl AzureSynapseClient {
@@ -50,6 +53,7 @@ impl AzureSynapseClient {
             storage_account: storage_account.to_string(),
             container: container.to_string(),
             workspace_dir: workspace_dir.to_string(),
+            maven_artifact: super::FEATHR_MAVEN_ARTIFACT.to_string(),
         })
     }
 
@@ -86,6 +90,18 @@ impl AzureSynapseClient {
             storage_account,
             container,
             workspace_dir: workspace_dir.trim_start_matches("/").to_string(),
+            maven_artifact: var_source
+                .get_environment_variable(&["spark_config", "maven_artifact"])
+                .await
+                .ok()
+                .map(|s| {
+                    if s.is_empty() {
+                        super::FEATHR_MAVEN_ARTIFACT.to_string()
+                    } else {
+                        s
+                    }
+                })
+                .unwrap_or(super::FEATHR_MAVEN_ARTIFACT.to_string()),
         })
     }
 
@@ -107,6 +123,7 @@ impl AzureSynapseClient {
             storage_account,
             container,
             workspace_dir: workspace_dir.trim_start_matches("/").to_string(),
+            maven_artifact: super::FEATHR_MAVEN_ARTIFACT.to_string(),
         })
     }
 }
@@ -147,20 +164,33 @@ impl JobClient for AzureSynapseClient {
     ) -> Result<JobId, crate::Error> {
         let args = self.get_arguments(var_source.clone(), &request).await?;
 
-        let main_jar_path = if request.main_jar_path.is_empty() {
+        let main_jar_path = if request.main_jar_path.is_none() {
             var_source
                 .get_environment_variable(&[
                     "spark_config",
                     "azure_synapse",
                     "feathr_runtime_location",
                 ])
-                .await?
+                .await
+                .ok()
         } else {
             request.main_jar_path
         };
 
         let mut orig_files: Vec<String> = vec![];
-        let mut orig_jars: Vec<String> = vec![main_jar_path];
+        let mut orig_jars: Vec<String> = match main_jar_path.clone() {
+            Some(p) => vec![p],
+            None => {
+                if request.main_python_script.is_none() {
+                    let noop_jar = self
+                        .get_remote_url(&format!("noop_{}_{}.jar", request.name, request.job_key));
+                    self.write_remote_file(&noop_jar, NOOP_JAR).await?;
+                    vec![noop_jar]
+                } else {
+                    vec![]
+                }
+            }
+        };
 
         for f in request.reference_files.into_iter() {
             if f.ends_with(".jar") {
@@ -182,7 +212,7 @@ impl JobClient for AzureSynapseClient {
         let py_files = self.multi_upload_or_get_url(&request.python_files).await?;
         debug!("Python files uploaded, URLs: {:#?}", py_files);
 
-        let executable = if let Some(code) = request.main_python_script {
+        let executable = if let Some(code) = request.main_python_script.clone() {
             self.write_remote_file(
                 &self.get_remote_url(&format!(
                     "feathr_pyspark_driver_{}_{}.py",
@@ -197,14 +227,23 @@ impl JobClient for AzureSynapseClient {
 
         debug!("Main executable file: {}", executable);
 
+        let mut conf = request.configuration;
+        if main_jar_path.is_none() {
+            let v = match conf.get("spark.jars.packages") {
+                Some(v) => format!("{},{}", v, self.maven_artifact),
+                None => self.maven_artifact.clone(),
+            };
+            conf.insert("spark.jars.packages".to_string(), v);
+        }
+
         let job = SparkRequest {
             args,
-            class_name: if py_files.is_empty() {
+            class_name: if request.main_python_script.is_none() {
                 request.main_class_name
             } else {
                 Default::default()
             },
-            conf: request.configuration,
+            conf,
             cluster_size: ClusterSize::MEDIUM(), // TODO:
             file: executable,
             files,
@@ -364,9 +403,7 @@ mod tests {
         );
 
         assert_eq!(
-            client
-                .get_file_name("test-script/pyspark-test.py")
-                .unwrap(),
+            client.get_file_name("test-script/pyspark-test.py").unwrap(),
             "pyspark-test.py"
         );
     }

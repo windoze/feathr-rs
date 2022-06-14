@@ -15,7 +15,7 @@ mod registry_client;
 mod livy_client;
 mod client;
 
-use log::debug;
+use log::trace;
 pub use livy_client::*;
 pub use project::{AnchorGroup, AnchorGroupBuilder, FeathrProject};
 pub use error::Error;
@@ -44,7 +44,7 @@ where
 {
     fn log(self) -> Self {
         if let Err(e) = &self {
-            debug!("---TraceError--- {:#?}", e)
+            trace!("---TraceError--- {:#?}", e)
         }
         self
     }

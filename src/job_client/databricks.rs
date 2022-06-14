@@ -7,9 +7,7 @@ use log::{debug, warn};
 use serde::{Deserialize, Serialize};
 use tokio::io::AsyncReadExt;
 
-use crate::{
-    Error, JobClient, JobId, JobStatus, SubmitJobRequest, VarSource,
-};
+use crate::{Error, JobClient, JobId, JobStatus, SubmitJobRequest, VarSource};
 
 #[async_trait]
 trait LoggedResponse {
@@ -50,10 +48,17 @@ pub struct DatabricksClient {
     client: reqwest::Client,
     workspace_dir: String,
     cluster: Cluster,
+    maven_artifact: String,
 }
 
 impl DatabricksClient {
-    pub fn new(url_base: &str, token: &str, workspace_dir: &str, cluster: Option<Cluster>) -> Self {
+    pub fn new(
+        url_base: &str,
+        token: &str,
+        workspace_dir: &str,
+        cluster: Option<Cluster>,
+        maven_artifact: &str,
+    ) -> Self {
         let mut headers = reqwest::header::HeaderMap::new();
         if !token.is_empty() {
             headers.insert(
@@ -76,6 +81,7 @@ impl DatabricksClient {
                 spark_conf: Default::default(),
                 custom_tags: Default::default(),
             })),
+            maven_artifact: maven_artifact.to_string(),
         }
     }
 
@@ -163,7 +169,25 @@ impl DatabricksClient {
         let config_template = serde_yaml::from_value::<ConfigTemplate>(value.to_owned())?;
         let nc = config_template.cluster;
 
-        Ok(Self::new(&url_base, &token, &workspace_dir, Some(nc)))
+        let maven_artifact = var_source
+            .get_environment_variable(&["spark_config", "maven_artifact"])
+            .await
+            .ok()
+            .map(|s| if s.is_empty() {
+                super::FEATHR_MAVEN_ARTIFACT.to_string()
+            } else {
+                s
+            })
+            .unwrap_or(super::FEATHR_MAVEN_ARTIFACT.to_string());
+        debug!("Maven artifact: {}", maven_artifact);
+
+        Ok(Self::new(
+            &url_base,
+            &token,
+            &workspace_dir,
+            Some(nc),
+            &maven_artifact,
+        ))
     }
 }
 
@@ -278,7 +302,8 @@ enum Library {
     },
     Maven {
         coordinates: String,
-        repo: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        repo: Option<String>,
         exclusions: Vec<String>,
     },
 }
@@ -306,20 +331,24 @@ impl JobClient for DatabricksClient {
     ) -> Result<JobId, Error> {
         let args = self.get_arguments(var_source.clone(), &request).await?;
 
-        let main_jar_path = if request.main_jar_path.is_empty() {
+        let main_jar_path = if request.main_jar_path.is_none() {
             var_source
                 .get_environment_variable(&[
                     "spark_config",
                     "databricks",
                     "feathr_runtime_location",
                 ])
-                .await?
+                .await
+                .ok()
         } else {
             request.main_jar_path
         };
 
         let mut orig_files: Vec<String> = vec![];
-        let mut orig_jars: Vec<String> = vec![main_jar_path];
+        let mut orig_jars: Vec<String> = match main_jar_path.clone() {
+            Some(p) => vec![p],
+            None => vec![],
+        };
 
         for f in request.reference_files.into_iter() {
             if f.ends_with(".jar") {
@@ -365,7 +394,16 @@ impl JobClient for DatabricksClient {
             }
         };
 
-        let libraries: Vec<Library> = jars.into_iter().map(|jar| Library::Jar(jar)).collect();
+        let mut libraries: Vec<Library> = jars.into_iter().map(|jar| Library::Jar(jar)).collect();
+
+        if main_jar_path.is_none() {
+            // Add maven artifact as the dependency
+            libraries.push(Library::Maven {
+                coordinates: self.maven_artifact.clone(),
+                repo: None,
+                exclusions: vec![],
+            });
+        }
 
         let cluster = match self.cluster.clone() {
             Cluster::NewCluster(mut cluster) => {

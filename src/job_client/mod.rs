@@ -26,6 +26,8 @@ pub(crate) const JOIN_JOB_MAIN_CLASS_NAME: &str = "com.linkedin.feathr.offline.j
 pub(crate) const GEN_JOB_MAIN_CLASS_NAME: &str = "com.linkedin.feathr.offline.job.FeatureGenJob";
 const PYTHON_TEMPLATE: &str = include_str!("../../template/feathr_pyspark_driver_template.py.hbr");
 
+const FEATHR_MAVEN_ARTIFACT: &str = "com.linkedin.feathr:feathr_2.12:0.4.0";
+
 #[derive(Clone, Debug, Default)]
 pub struct SubmitJobRequest {
     pub job_key: Uuid,
@@ -33,7 +35,7 @@ pub struct SubmitJobRequest {
     pub job_config_file_name: String,
     pub input: String,
     pub output: String,
-    pub main_jar_path: String,
+    pub main_jar_path: Option<String>,
     pub main_class_name: String,
     pub main_python_script: Option<String>,
     pub feature_config: String,
@@ -621,7 +623,7 @@ impl SubmitJoiningJobRequestBuilder {
             job_config_file_name: format!("feathr_join_config_{}_{}.conf", self.job_name, job_key.as_simple()),
             input: self.input_path.to_owned(),
             output,
-            main_jar_path: self.main_jar_path.to_owned().unwrap_or_default(),
+            main_jar_path: self.main_jar_path.clone(),
             main_class_name: self
                 .main_class_name
                 .to_owned()
@@ -757,7 +759,7 @@ impl SubmitGenerationJobRequestBuilder {
                     ),
                     input: self.input_path.to_owned(),
                     output: Default::default(),
-                    main_jar_path: self.main_jar_path.to_owned().unwrap_or_default(),
+                    main_jar_path: self.main_jar_path.clone(),
                     main_class_name: self
                         .main_class_name
                         .to_owned()
