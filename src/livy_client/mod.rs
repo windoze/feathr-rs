@@ -4,7 +4,7 @@ mod models;
 mod azure_synapse;
 
 use async_trait::async_trait;
-use log::debug;
+use log::{debug, trace};
 use reqwest::{RequestBuilder, Response};
 use serde::{de::DeserializeOwned, Serialize};
 use std::fmt::Debug;
@@ -25,7 +25,7 @@ where
 {
     fn log(self) -> Self {
         if let Err(e) = &self {
-            debug!("---TraceError--- {:#?}", e)
+            trace!("---TraceError--- {:#?}", e)
         }
         self
     }
@@ -38,7 +38,7 @@ async fn get_response(url: &str, resp: Response) -> Result<String> {
     let status = resp.status();
     let text = resp.text().await.log()?;
     debug!("Status: {}", status);
-    debug!("Response: {}", text);
+    trace!("Response: {}", text);
     if status.is_client_error() || status.is_server_error() {
         Err(LivyClientError::HttpError(url.to_string(), status, text))
     } else {
