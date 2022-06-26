@@ -32,7 +32,16 @@ pub struct SourceDef {
     pub name: String,
     #[serde(rename = "type")]
     pub source_type: String,
-    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub dbtable: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub query: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub auth: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub event_timestamp_column: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -45,17 +54,45 @@ pub struct SourceDef {
 
 impl From<SourceImpl> for SourceDef {
     fn from(s: SourceImpl) -> Self {
-        let (t, path) = match s.location {
-            crate::SourceLocation::Hdfs { path } => ("hdfs".to_string(), path),
-            crate::SourceLocation::InputContext => {
-                ("PASSTHROUGH".to_string(), "PASSTHROUGH".to_string())
+        let (t, path, url, dbtable, query, auth) = match s.location {
+            crate::SourceLocation::Hdfs { path } => {
+                ("hdfs".to_string(), Some(path), None, None, None, None)
             }
-            _ => todo!(),
+            crate::SourceLocation::InputContext => (
+                "PASSTHROUGH".to_string(),
+                Some("PASSTHROUGH".to_string()),
+                None,
+                None,
+                None,
+                None,
+            ),
+            crate::SourceLocation::Jdbc {
+                url,
+                dbtable,
+                query,
+                auth,
+            } => (
+                "jdbc".to_string(),
+                None,
+                Some(url),
+                dbtable,
+                query,
+                match auth {
+                    crate::JdbcAuth::Userpass { .. } => Some("USERPASS".to_string()),
+                    crate::JdbcAuth::Token { .. } => Some("TOKEN".to_string()),
+                    crate::JdbcAuth::Anonymous => None,
+                },
+            ),
+            crate::SourceLocation::Kafka { .. } => todo!(),
         };
         Self {
             name: s.name,
             source_type: t,
             path,
+            url,
+            dbtable,
+            query,
+            auth,
             event_timestamp_column: s.time_window_parameters.clone().map(|t| t.timestamp_column),
             timestamp_format: s.time_window_parameters.map(|t| t.timestamp_column_format),
             preprocessing: s.preprocessing,
