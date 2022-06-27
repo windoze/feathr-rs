@@ -1,7 +1,13 @@
 [package]
 name = "feathr"
-version = "0.2.6"
+version = "0.2.7"
 edition = "2021"
+description = "LinkedIn Feathr Feature Store Client"
+authors = ["Chen Xu<windoze@0d0a.com>"]
+license = "MIT OR Apache-2.0"
+categories = ["data-processing"]
+keywords = ["linkedin", "feathr", "feature", "store"]
+readme = "README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
